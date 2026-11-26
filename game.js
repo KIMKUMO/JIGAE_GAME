@@ -32,25 +32,29 @@ const X0=-560,X1=560,Z0=-40,Z1=1300,CELL=2.5;
 const SEGX=Math.round((X1-X0)/CELL),SEGZ=Math.round((Z1-Z0)/CELL),VX=SEGX+1,VZ=SEGZ+1;
 const MAP={x0:X0+12,x1:X1-12,z0:Z0+12,z1:Z1-12};
 const SUMMIT_X=0,SUMMIT_Z=1110,SUMMIT_R=7;
-const MTN_Z0=300,H=220;
+const MTN_Z0=110,H=400;
 const START_SLOTS=[-400,-140,140,400],START_Z=35;
 let START_X=START_SLOTS[1];
 // the layout changes every visit; add ?seed=123 to the address to replay a particular map
 const LAYOUT_SEED=(()=>{try{const q=new URLSearchParams(location.search).get('seed');if(q&&isFinite(+q))return (+q)|0;}catch(e){}return (Math.random()*2147483647)|0;})();
 const lrand=mulberry32(LAYOUT_SEED);
 
+// an almost straight cone that starts climbing right after the starting meadow, then stepped
+// into broad steep belts with narrow benches between them (no long gentle approach any more)
+const TERRACE=46,TERRACE_K=2.0;
+function terrace(h){const n=Math.floor(h/TERRACE),f=h/TERRACE-n;return (n+0.5+0.5*Math.tanh((f-0.5)*TERRACE_K)/Math.tanh(TERRACE_K/2))*TERRACE;}
 function mtnShape(x,z){
-  const dz=z<SUMMIT_Z?(SUMMIT_Z-z)/(SUMMIT_Z-MTN_Z0+40):(z-SUMMIT_Z)/170,dx=(x-SUMMIT_X)/620;
-  return H*Math.pow(Math.max(0,1-Math.sqrt(dx*dx+dz*dz)),1.35);
+  const dz=z<SUMMIT_Z?(SUMMIT_Z-z)/(SUMMIT_Z-MTN_Z0+30):(z-SUMMIT_Z)/170,dx=(x-SUMMIT_X)/640,u=Math.max(0,1-Math.sqrt(dx*dx+dz*dz));
+  return terrace(H*u*smoothstep(0,0.07,u));
 }
-function roughAt(x,z){const foot=lerp(0.35,1,smoothstep(MTN_Z0-60,MTN_Z0+120,z));return (fbm(x/45,z/45)*6+fbm(x/9,z/9)*1.2)*foot;}
-function ridgesAt(x,z,m){const f=m/H,amp=12*smoothstep(0.04,0.3,f)*(1-smoothstep(0.75,0.95,f));return (0.35-Math.abs(Math.sin(x/75+fbm(x/120,z/120)*1.5)))*amp;}
+function roughAt(x,z){const foot=lerp(0.35,1,smoothstep(MTN_Z0-60,MTN_Z0+80,z));return (fbm(x/45,z/45)*6+fbm(x/9,z/9)*1.2)*foot;}
+function ridgesAt(x,z,m){const f=m/H,amp=8*smoothstep(0.04,0.3,f)*(1-smoothstep(0.75,0.95,f));return (0.35-Math.abs(Math.sin(x/75+fbm(x/120,z/120)*1.5)))*amp;}
 
 // cliff band (절벽): a 16 m wall across the whole mountain, climbable only at two gaps
 const CLIFF={z:850+lrand()*60,p:lrand()*6.28,gaps:[]};
 {const g1=-430+lrand()*860;let g2;do{g2=-430+lrand()*860;}while(Math.abs(g2-g1)<280);CLIFF.gaps.push({x:g1,hw:26},{x:g2,hw:26});}
 function cliffZ(x){return CLIFF.z+22*Math.sin(x/110+CLIFF.p)+9*Math.sin(x/41+CLIFF.p*2);}
-function cliffGap(x){let g=0;for(const gp of CLIFF.gaps)g=Math.max(g,1-smoothstep(gp.hw,gp.hw+6,Math.abs(x-gp.x)));return g;}   // a clear-cut gap, no half-steep edges
+function cliffGap(x){let g=0;for(const gp of CLIFF.gaps)g=Math.max(g,1-smoothstep(gp.hw,gp.hw+2.5,Math.abs(x-gp.x)));return g;}   // a clear-cut gap, no half-steep edges
 function cliffAdd(x,z){const w=lerp(1.8,32,cliffGap(x)),zc=cliffZ(x);return 16*smoothstep(zc-w,zc+w,z);}
 
 // canyon (계곡) with a river: walls you cannot climb, except the ramps at the ford (여울)
@@ -71,7 +75,7 @@ function creekX(z){return FALL_X+7*Math.sin(z/38)*smoothstep(CREEK_Z0,CREEK_Z0+3
 function creekCut(x,z,h){if(z<CREEK_Z0||z>CREEK_Z1)return h;const d=Math.abs(x-creekX(z));if(d>6)return h;return h-1.6*(1-smoothstep(1.8,5,d));}
 
 // ---------------------------------------------------------------- special patches (구간)
-const Z_STAIRS=0,Z_SCREE=1,Z_STEEP=2,Z_MOSS=3,Z_WIND=4,Z_FOG=5;
+const Z_STAIRS=0,Z_SCREE=1,Z_STEEP=2,Z_MOSS=3,Z_WIND=4,Z_FOG=5,Z_MUD=6,Z_ROCKFALL=7,Z_LOGS=8,Z_LEAF=9;
 const ZONES=[
   {name:'구불구불 돌계단',     desc:'계단으로 오르세요. 뛰면 계단마다 라디오가 튀어요'},
   {name:'너덜지대',           desc:'돌이 흘러내려요. 멈춰 있으면 아래로 미끄러져요'},
@@ -79,19 +83,23 @@ const ZONES=[
   {name:'이끼 낀 바위',        desc:'미끄러워서 잘 멈추지도 돌지도 못해요'},
   {name:'바람 부는 억새 능선', desc:'돌풍이 불면 Q/E로 버티세요'},
   {name:'안개 낀 단풍 숲',     desc:'안개 때문에 앞이 안 보이고 나침반도 꺼져요'},
+  {name:'진흙탕',             desc:'발이 푹푹 빠져 아주 느리고 뛸 수 없어요'},
+  {name:'낙석 지대',           desc:'위에서 돌이 굴러와요. 맞으면 라디오를 놓쳐요'},
+  {name:'쓰러진 나무',         desc:'통나무를 넘을 때마다 덜컹. 천천히 넘으세요'},
+  {name:'낙엽 구덩이',         desc:'짙은 자국 밑은 구덩이예요. 빠지면 휘청해요'},
 ];
-const ZONE_COLORS=[0x7d7a48,0x6f695f,0x7c6a52,0x4d6a3c,0xc4ad68,0x6b3d24],ZONE_TINT=[0.15,0.85,0.45,0.75,0.55,0.6];
+const ZONE_COLORS=[0x7d7a48,0x6f695f,0x7c6a52,0x4d6a3c,0xc4ad68,0x6b3d24,0x4a3a28,0x7b736a,0x6a5a34,0xb5652a],ZONE_TINT=[0.15,0.85,0.45,0.75,0.55,0.6,0.8,0.7,0.35,0.75];
 const PATCHES=[];
 {
-  const order=[];for(let k=0;k<3;k++)for(let t=0;t<6;t++)order.push(t);
+  const order=[];for(let k=0;k<3;k++)for(let t=0;t<ZONES.length;t++)order.push(t);   // 10 kinds x 3 = 30 patches
   for(let i=order.length-1;i>0;i--){const j=Math.floor(lrand()*(i+1));const tmp=order[i];order[i]=order[j];order[j]=tmp;}
-  for(let tries=0;tries<4000&&PATCHES.length<order.length;tries++){
-    const R=42+lrand()*34,x=-490+lrand()*980,z=340+lrand()*700;
+  for(let tries=0;tries<9000&&PATCHES.length<order.length;tries++){
+    const R=34+lrand()*28,x=-495+lrand()*990,z=MTN_Z0+70+lrand()*(1050-MTN_Z0-70);
     if(Math.abs(z-canyonZ(x))<R+28||Math.abs(z-cliffZ(x))<R+14)continue;
     if(Math.hypot(x-SUMMIT_X,z-SUMMIT_Z)<R+45)continue;
     if(Math.hypot(x-BRIDGE_X,z-canyonZ(BRIDGE_X))<R+50||Math.hypot(x-FORD_X,z-canyonZ(FORD_X))<R+50)continue;
     if(Math.abs(x-FALL_X)<R+14&&z>CREEK_Z0-20&&z<CREEK_Z1+R)continue;
-    if(PATCHES.some(p=>Math.hypot(p.x-x,p.z-z)<p.R+R+18))continue;
+    if(PATCHES.some(p=>Math.hypot(p.x-x,p.z-z)<p.R+R+12))continue;
     const e=3,gx=(mtnShape(x+e,z)-mtnShape(x-e,z))/(2*e),gz=(mtnShape(x,z+e)-mtnShape(x,z-e))/(2*e),gl=Math.hypot(gx,gz)||1;
     PATCHES.push({x,z,R,type:order[PATCHES.length],ux:gl>1e-6?gx/gl:0,uz:gl>1e-6?gz/gl:1});
   }
@@ -110,12 +118,13 @@ function terrainHeight(x,z){
   const zi=zoneInfo(x,z,_zi);
   if(zi.i>=0){
     const p=PATCHES[zi.i],w=zi.w;
-    if(zi.type===Z_STEEP||zi.type===Z_STAIRS){   // the climb squeezed into a steep pitch
+    if(zi.type===Z_STEEP||zi.type===Z_STAIRS||zi.type===Z_ROCKFALL){   // the climb squeezed into a steep pitch
       const lo=mtnShape(p.x-p.ux*p.R,p.z-p.uz*p.R),hi=mtnShape(p.x+p.ux*p.R,p.z+p.uz*p.R);
-      if(hi-lo>4){const t=clamp((m-lo)/(hi-lo),0,1),k=5,tt=0.5+0.5*Math.tanh((t-0.5)*k)/Math.tanh(k/2);h+=(lo+(hi-lo)*tt-m)*w;}
+      if(hi-lo>4){const t=clamp((m-lo)/(hi-lo),0,1),k=zi.type===Z_STEEP?3.6:3.2,tt=0.5+0.5*Math.tanh((t-0.5)*k)/Math.tanh(k/2);h+=(lo+(hi-lo)*tt-m)*w;}
       h+=rough;
     }else if(zi.type===Z_SCREE)h+=rough+w*(fbm(x/6,z/6)*3.4+(vnoise(x/4.1,z/4.1)-0.5)*1.6);
     else if(zi.type===Z_MOSS||zi.type===Z_WIND)h+=rough*lerp(1,0.3,w);
+    else if(zi.type===Z_MUD)h+=rough*lerp(1,0.2,w)-w*0.6+w*(vnoise(x/5,z/5)-0.5)*0.5;   // soggy hollow
     else h+=rough;
   }else h+=rough;
   h+=cliffAdd(x,z);
@@ -186,6 +195,13 @@ function surfaceH(x,z,yHint){
   const g=groundH(x,z);
   if(onBridge(x,z,yHint))return Math.max(g,bridgeDeck(z));
   const k=stepAt(x,z);return k>=0?Math.max(g,STEPS[k].top):g;
+}
+// only the real barriers count as cliffs: the canyon walls (except the ford) and the cliff band
+// (except its gaps). Elsewhere a steep spot just slows you down; it never stops you or throws you off.
+function isCliffFeature(x,z){
+  if(Math.abs(z-canyonZ(x))<45&&fordW(x)<0.5)return true;
+  if(Math.abs(z-cliffZ(x))<8&&cliffGap(x)<0.5)return true;
+  return false;
 }
 function inWater(x,z,y){return Math.abs(z-canyonZ(x))<CAN.floorHW+0.5&&y<canyonFloor(x)+1.2;}
 
@@ -348,11 +364,11 @@ function keepClear(x,z){ // places where nothing should grow
 }
 {
   const pines=[],leafy=[],rocks=[],grass=[];
-  const keep=[0.4,0.15,0.3,0.45,0.08,1.0];       // trees kept per kind of patch
+  const keep=[0.4,0.15,0.3,0.45,0.08,1.0,0.06,0.12,0.55,0.75];       // trees kept per kind of patch
   for(let k=0;k<70000&&(pines.length+leafy.length)<8000;k++){
     const x=X0+20+rand()*(X1-X0-40),z=Z0+20+rand()*(Z1-Z0-40);
     if(keepClear(x,z))continue;
-    const zi=zoneInfo(x,z,_zi),fog=zi.type===Z_FOG&&zi.w>0.3;
+    const zi=zoneInfo(x,z,_zi),fog=(zi.type===Z_FOG||zi.type===Z_LEAF)&&zi.w>0.3;
     if(rand()>lerp(0.42,zi.type>=0?keep[zi.type]:0.42,zi.w))continue;
     if(!fog&&vnoise(x/34+7,z/34+3)<0.3)continue;
     if(nearStairs(x,z,3.2)||nearBlocker(x,z,fog?1.15:1.6))continue;
@@ -397,6 +413,42 @@ function keepClear(x,z){ // places where nothing should grow
 }
 
 // small stones: a few everywhere, lots on the scree. Stepping on one jolts the radio.
+// fallen logs, leaf litter with hidden holes, mud puddles, and the rockfall boulders
+const logG=makeGrid(8),holeG=makeGrid(6),LOGS=[],HOLES=[];
+{
+  const leaves=[],puddles=[],holeMarks=[];
+  for(const p of PATCHES){
+    const vx=-p.uz,vz=p.ux;
+    if(p.type===Z_LOGS){
+      // rows of long fallen trunks across the slope: whichever way you go up, you climb over them
+      for(let s=-p.R*0.8;s<=p.R*0.8;s+=4.5+lrand()*2.5){
+        const w=Math.sqrt(Math.max(0,p.R*p.R-s*s))*0.95;
+        for(let off=-w+lrand()*3;off<w;off+=9+lrand()*3){
+          const a=(lrand()-0.5)*0.6,dx=vx*Math.cos(a)-p.ux*Math.sin(a),dz=vz*Math.cos(a)-p.uz*Math.sin(a);
+          const L={x:p.x+p.ux*s+vx*off,z:p.z+p.uz*s+vz*off,dx,dz,half:4+lrand()*2.5,hitT:-9};LOGS.push(L);
+          for(let sd=-L.half;sd<=L.half;sd+=3)gridAdd(logG,L.x+dx*sd,L.z+dz*sd,L);
+        }
+      }
+    }else if(p.type===Z_LEAF){
+      const nh=Math.floor(Math.PI*p.R*p.R/34);
+      for(let k=0;k<nh;k++){const a=lrand()*6.283,r=Math.sqrt(lrand())*p.R*0.85,o={x:p.x+Math.cos(a)*r,z:p.z+Math.sin(a)*r,cd:0};HOLES.push(o);gridAdd(holeG,o.x,o.z,o);holeMarks.push(o);}
+      for(let k=0;k<2600;k++){const a=lrand()*6.283,r=Math.sqrt(lrand())*p.R,x=p.x+Math.cos(a)*r,z=p.z+Math.sin(a)*r;leaves.push({x,z,y:groundH(x,z)+0.04,rot:lrand()*6.283,c:lrand()});}
+    }else if(p.type===Z_MUD){
+      for(let k=0;k<70;k++){const a=lrand()*6.283,r=Math.sqrt(lrand())*p.R*0.8,x=p.x+Math.cos(a)*r,z=p.z+Math.sin(a)*r;puddles.push({x,z,y:groundH(x,z)+0.14,s:1+lrand()*2.6,sx:0.6+lrand()*0.8});}
+    }
+  }
+  const logGeo=new THREE.CylinderGeometry(0.22,0.26,1,7);
+  instMesh(logGeo,lam(0xffffff),LOGS,(L,d,c)=>{d.position.set(L.x,groundH(L.x,L.z)+0.2,L.z);d.rotation.set(0,Math.atan2(L.dz,-L.dx),Math.PI/2);d.scale.set(1,L.half*2,1);c.setHex(0x6b4a2b);});
+  const leafPal=[0xc8452b,0xe07a2e,0xd8962f,0xb5392a,0x9a5a2a];
+  const leafGeo=new THREE.PlaneGeometry(0.42,0.32);leafGeo.rotateX(-Math.PI/2);
+  instMesh(leafGeo,lam(0xffffff,{side:THREE.DoubleSide}),leaves,(l,d,c)=>{d.position.set(l.x,l.y,l.z);d.rotation.set(0,l.rot,0);d.scale.setScalar(1);c.setHex(leafPal[(l.c*leafPal.length)|0]);},false);
+  const discGeo=new THREE.CircleGeometry(1,14);discGeo.rotateX(-Math.PI/2);
+  instMesh(discGeo,lam(0xffffff),holeMarks,(o,d,c)=>{d.position.set(o.x,groundH(o.x,o.z)+0.08,o.z);d.rotation.set(0,0,0);d.scale.set(0.75,1,0.75);c.setHex(0x3e1d0c);},false);   // the tell-tale dark patch over a hole
+  instMesh(discGeo,new THREE.MeshPhongMaterial({color:0xffffff,shininess:90,specular:0x8a8a8a}),puddles,(o,d,c)=>{d.position.set(o.x,o.y,o.z);d.rotation.set(0,o.s,0);d.scale.set(o.s,1,o.s*o.sx);c.setHex(0x2a2016);},false);   // glossy wet puddles
+}
+const ROCKS=[],RF={t:2};
+{const geo=new THREE.DodecahedronGeometry(0.8,0),mat=lam(0x8a8276);for(let k=0;k<4;k++){const m=new THREE.Mesh(geo,mat);m.castShadow=true;m.visible=false;scene.add(m);ROCKS.push({m,on:false,x:0,z:0,vx:0,vz:0,life:0,hit:false});}}
+
 const bumps=[],roots=[];
 {
   for(let k=0;k<60000&&bumps.length<10000;k++){const x=X0+20+rand()*(X1-X0-40),z=Z0+20+rand()*(Z1-Z0-40);
@@ -553,6 +605,9 @@ function playBoing(n){if(!AC)return;const t=AC.currentTime,v=0.34/n;const o=AC.c
   o.connect(g);g.connect(master);o.start(t);o.stop(t+0.4);playNoise(t,0.08,v*0.6,1100);}
 let waterGain=null;
 function playGust(){if(!AC)return;const t=AC.currentTime,s=AC.createBufferSource();s.buffer=noiseBuf;const f=AC.createBiquadFilter();f.type='bandpass';f.frequency.setValueAtTime(400,t);f.frequency.linearRampToValueAtTime(900,t+0.8);f.frequency.linearRampToValueAtTime(300,t+2);f.Q.value=0.7;const g=AC.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.35,t+0.5);g.gain.exponentialRampToValueAtTime(0.0001,t+2.2);s.connect(f);f.connect(g);g.connect(master);s.start(t,Math.random());s.stop(t+2.3);}
+function playRumble(){if(!AC)return;const t=AC.currentTime,s=AC.createBufferSource();s.buffer=noiseBuf;const f=AC.createBiquadFilter();f.type='lowpass';f.frequency.value=220;const g=AC.createGain();g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.55,t+0.25);g.gain.exponentialRampToValueAtTime(0.0001,t+1.6);s.connect(f);f.connect(g);g.connect(master);s.start(t,Math.random());s.stop(t+1.7);}
+function playSquelch(){if(!AC)return;const t=AC.currentTime;playNoise(t,0.12,0.18,320);}
+function playCrunch(){if(!AC)return;const t=AC.currentTime;playNoise(t,0.18,0.3,1500);playNoise(t+0.05,0.25,0.25,500);}
 function playClick(){if(!AC)return;const t=AC.currentTime;playNoise(t,0.05,0.25,3000);playNoise(t+0.08,0.05,0.2,2000);}
 function playWin(){if(!AC)return;const t=AC.currentTime+0.05;[72,76,79,84].forEach((m,i)=>{const o=AC.createOscillator(),g=AC.createGain();o.type='triangle';o.frequency.value=midiF(m);g.gain.setValueAtTime(0.0001,t+i*0.13);g.gain.exponentialRampToValueAtTime(0.25,t+i*0.13+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+i*0.13+0.6);o.connect(g);g.connect(master);o.start(t+i*0.13);o.stop(t+i*0.13+0.7);});}
 function setMuted(m){muted=m;$('muteBtn').firstChild.nodeValue=m?'소리 켜기 ':'소리 끄기 ';if(master)master.gain.setTargetAtTime(m?0:0.7,AC.currentTime,0.05);}
@@ -560,7 +615,7 @@ $('muteBtn').addEventListener('click',()=>{initAudio();setMuted(!muted);canvas.f
 
 // ---------------------------------------------------------------- game state
 const P={x:0,z:0,y:0,yaw:0,pitch:0,vx:0,vz:0,speed:0,accel:0,lat:0,lean:0,side:0,step:0,busy:0,grace:0,
-  yawPrev:0,yawVel:0,yawVelPrev:0,shake:0,stair:-1,zone:-1,wasBridge:false,wasWet:false};
+  yawPrev:0,yawVel:0,yawVelPrev:0,shake:0,stair:-1,zone:-1,wasBridge:false,wasWet:false,mudStep:0};
 const B={pitch:0,roll:0,pv:0,rv:0};
 const R={state:'carried',pos:new THREE.Vector3(),vel:new THREE.Vector3(),ang:new THREE.Vector3(),q:new THREE.Quaternion(),rest:0,pick:0,from:new THREE.Vector3(),fromQ:new THREE.Quaternion(),bounces:0,air:false,fallT:0,squash:0};
 // 떨어질 때마다 1~3번 중 무작위로 튀고, 그다음 땅에 닿으면 그 자리에서 멈춘다
@@ -758,15 +813,16 @@ function update(dt){
   maxSpd*=clamp(1-Math.max(0,mGrade)*1.1,0.3,1);
   if(zt===Z_STEEP)maxSpd*=lerp(1,0.6,zw);
   if(zt===Z_SCREE)maxSpd*=lerp(1,0.75,zw);
+  if(zt===Z_MUD)maxSpd=Math.min(maxSpd,lerp(maxSpd,1.6,zw));     // knee-deep: no running
   if(wet)maxSpd*=0.5;
   // cliffs and canyon walls can't be climbed: go round, or find the gap, the ford or the bridge
-  const wall=ml>0&&mGrade>1.45&&!bridgeNow;
+  const wall=ml>0&&mGrade>1.45&&!bridgeNow&&isCliffFeature(P.x+mx*0.6,P.z+mz*0.6);
   if(wall){maxSpd=0;if(toastT<=0&&playing)toast('절벽이라 오를 수 없어요. 다른 길을 찾으세요',2.2);}
   const tvx=ml>0?mx*maxSpd:0,tvz=ml>0?mz*maxSpd:0;
   const pvx=P.vx,pvz=P.vz;
   // traction: mossy rock and water barely let you speed up, slow down or turn
   const speedingUp=Math.hypot(tvx,tvz)>Math.hypot(P.vx,P.vz);
-  const grip=(zt===Z_MOSS?lerp(1,speedingUp?0.3:0.09,zw):1)*(wet?0.45:1);   // on moss you get going slowly and stop even more slowly
+  const grip=(zt===Z_MOSS?lerp(1,speedingUp?0.3:0.09,zw):1)*(zt===Z_MUD?lerp(1,0.5,zw):1)*(wet?0.45:1);   // on moss you get going slowly and stop even more slowly
   {let dvx=tvx-P.vx,dvz=tvz-P.vz;const dvl=Math.hypot(dvx,dvz),rate=(speedingUp?4.5:7)*grip*dt;
    if(dvl>rate&&dvl>1e-9){dvx*=rate/dvl;dvz*=rate/dvl;}P.vx+=dvx;P.vz+=dvz;}
   if(zt===Z_MOSS&&zw>0.4&&P.speed>1&&Math.random()<dt*0.9){const s=(Math.random()-.5)*3.2;P.vx+=rx*s;P.vz+=rz*s;}   // a foot slips sideways
@@ -780,6 +836,24 @@ function update(dt){
     if(zt===Z_SCREE&&zw>0.2){downhill(P.x,P.z,_dh);const s=zw*(0.8+1.2*Math.min(1,slopeAt(P.x,P.z)*2));P.x+=_dh.x*s*dt;P.z+=_dh.z*s*dt;}
     if(zt===Z_STEEP&&zw>0.2&&fwdIn<=0){downhill(P.x,P.z,_dh);const s=1.8*zw*Math.min(1,slopeAt(P.x,P.z)*1.5);P.x+=_dh.x*s*dt;P.z+=_dh.z*s*dt;}
   }
+  // fallen logs: stepping over one slows you and jolts the load
+  let logHit=0;
+  gridEach(logG,P.x,P.z,L=>{if(clock-L.hitT<1.0)return;   /* a log sits in several grid cells: time-stamp, not a countdown */const ox=P.x-L.x,oz=P.z-L.z,al=ox*L.dx+oz*L.dz,pe=Math.abs(-ox*L.dz+oz*L.dx);
+    if(Math.abs(al)<L.half&&pe<0.45&&P.speed>0.3){L.hitT=clock;logHit=Math.max(logHit,P.speed);P.vx*=0.55;P.vz*=0.55;hips.position.y=1.06;}});
+  // hidden holes under the leaves
+  let holeHit=false;
+  if(zt===Z_LEAF)gridEach(holeG,P.x,P.z,o=>{o.cd=Math.max(0,o.cd-dt);if(o.cd>0)return;if(Math.hypot(P.x-o.x,P.z-o.z)<0.62&&P.speed>0.2){o.cd=4;holeHit=true;P.vx*=0.2;P.vz*=0.2;hips.position.y=0.6;}});
+  if(holeHit){playCrunch();if(playing&&toastT<=0.6)toast('낙엽 밑 구덩이에 발이 빠졌어요!',1.8);}
+  // mud: every step sucks at your boots
+  let mudStep=false;{const ms=Math.floor(P.step/Math.PI);if(ms!==P.mudStep){P.mudStep=ms;mudStep=zt===Z_MUD&&zw>0.4&&P.speed>0.3;if(mudStep&&Math.random()<0.6)playSquelch();}}
+  // rockfall: boulders come rolling down the slope at you
+  if(playing&&zt===Z_ROCKFALL&&zw>0.3){RF.t-=dt;if(RF.t<=0){RF.t=2.2+Math.random()*2.5;const r=ROCKS.find(r=>!r.on);
+    if(r){downhill(P.x,P.z,_dh);const lat=(Math.random()-0.5)*7;r.x=P.x-_dh.x*26-_dh.z*lat;r.z=P.z-_dh.z*26+_dh.x*lat;/* aimed at where you stand now: step aside to dodge */{const ax=P.x-r.x,az=P.z-r.z,al=Math.hypot(ax,az)||1;r.dx=ax/al;r.dz=az/al;}r.vx=0;r.vz=0;r.life=8;r.hit=false;r.on=true;r.m.visible=true;playRumble();if(toastT<=0.6)toast('낙석! 굴러오는 돌을 피하세요',1.6);}}}
+  for(const r of ROCKS){if(!r.on)continue;r.life-=dt;const k2=1-Math.exp(-dt*2.5);r.vx=lerp(r.vx,r.dx*6.2,k2);r.vz=lerp(r.vz,r.dz*6.2,k2);r.x+=r.vx*dt;r.z+=r.vz*dt;
+    const ry=groundH(r.x,r.z)+0.75+Math.abs(Math.sin(r.life*6))*0.4;r.m.position.set(r.x,ry,r.z);r.m.rotation.x+=dt*Math.hypot(r.vx,r.vz)/0.8;r.m.rotation.y=Math.atan2(r.vx,r.vz);
+    if(r.life<=0||r.x<MAP.x0||r.x>MAP.x1||r.z<MAP.z0||r.z>MAP.z1){r.on=false;r.m.visible=false;continue;}
+    if(!r.hit&&playing&&Math.hypot(r.x-P.x,r.z-P.z)<1.3&&Math.abs(ry-P.y-1)<2.2){r.hit=true;P.vx+=r.vx*0.5;P.vz+=r.vz*0.5;playThud(4);
+      if(R.state==='carried'){B.pitch=0.9;dropRadio();toast('굴러온 돌에 맞았어요!',2);}}}
   // wind gusts on the ridges also shove you a little
   if(zt===Z_WIND&&WIND.on>0){P.x+=WIND.x*0.5*zw*dt;P.z+=WIND.z*0.5*zw*dt;}
   // trees and big rocks block the way
@@ -791,7 +865,7 @@ function update(dt){
   const prevY=P.y;
   P.y=surfaceH(P.x,P.z,prevY);
   // stepping off a cliff edge: you tumble down and the radio goes flying
-  if(!bridgeNow&&stairNow<0&&slopeAt(P.x,P.z)>1.7){
+  if(!bridgeNow&&stairNow<0&&slopeAt(P.x,P.z)>1.7&&isCliffFeature(P.x,P.z)){
     downhill(P.x,P.z,_dh);P.vx=_dh.x*4;P.vz=_dh.z*4;
     if(R.state==='carried'&&playing){B.pitch=0.9;dropRadio();toast('절벽에서 미끄러졌어요!',2.4);}
   }
@@ -835,6 +909,9 @@ function update(dt){
     if(zt===Z_SCREE&&zw>0.3&&Math.random()<dt*3*zw){const s=0.35+sp/4.4*0.4;B.pv+=Math.random()*0.5*s;B.rv+=(Math.random()-.5)*0.9*s;}
     // water: the current tugs at you
     if(wet&&Math.random()<dt*1.5){B.rv+=(Math.random()-.5)*0.7;B.pv+=Math.random()*0.25;}
+    if(logHit){const imp=0.18+0.035*logHit*logHit;B.pv+=imp*(0.8+Math.random()*0.4);B.rv+=(Math.random()-.5)*imp;}
+    if(holeHit){B.pv+=0.5+Math.random()*0.3;B.rv+=(Math.random()-.5)*0.9;}
+    if(mudStep){B.pv+=0.08+Math.random()*0.14;B.rv+=(Math.random()-.5)*0.28;}
     // waterfall spray
     {const d=Math.hypot(P.x-WF.x,P.z-WF.zBot);if(d<22&&P.y<WF.yBot+6&&Math.random()<dt*2)B.rv+=(Math.random()-.5)*0.9*(1-d/22);}
     // windy ridge: gusts lean the radio away from the wind (hold it with Q/E, or turn into the wind)
@@ -1026,6 +1103,6 @@ function frame(now){
 document.body.classList.add('title');
 reset();
 requestAnimationFrame(frame);
-window.__game={P,B,R,BS,WIND,LAYOUT_SEED,get state(){return game;},get fog(){return fogMix;},keys,dropRadio,tryPickup,groundH,slopeAt,surfaceH,stepAt,zoneAt,onBridge,inWater,canyonZ,canyonFloor,cliffZ,CLIFF,BR,FORD_X,FALL_X,PATCHES,STEPS,STAIR_STARTS,ZONES,SUMMIT_X,SUMMIT_Z,SUMMIT_H,START_SLOTS,
+window.__game={P,B,R,BS,WIND,LAYOUT_SEED,get state(){return game;},get fog(){return fogMix;},keys,dropRadio,tryPickup,groundH,slopeAt,surfaceH,stepAt,zoneAt,onBridge,inWater,canyonZ,canyonFloor,cliffZ,CLIFF,BR,FORD_X,FALL_X,PATCHES,STEPS,STAIR_STARTS,ZONES,ROCKS,LOGS,HOLES,isCliffFeature,SUMMIT_X,SUMMIT_Z,SUMMIT_H,START_SLOTS,
   step(n,dt,quiet){for(let i=0;i<n;i++)update(dt);if(!quiet){updateHUD();renderer.render(scene,camera);}},start:startGame};
 })();
