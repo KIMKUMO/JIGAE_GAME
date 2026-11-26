@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>지게 라디오</title>
+<meta name="description" content="지게에 라디오를 지고 구불구불한 산길을 올라가는 3D 웹 게임">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+KR:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<canvas id="game" tabindex="0" aria-label="지게 라디오 게임 화면"></canvas>
+
+<div class="hud panel" id="topL">
+  <div class="name">소리봉 등산로</div>
+  <div class="alt" id="alt">해발 420 m · 정상까지 0.00 km</div>
+  <div class="bar"><i id="prog"></i></div>
+</div>
+<div class="hud panel" id="topR">
+  <div class="t" id="time">00:00.0</div>
+  <div class="d">떨어뜨림 <b id="drops">0</b>회</div>
+</div>
+<button id="muteBtn" type="button">소리 끄기 <kbd>M</kbd></button>
+
+<div class="hud" id="gaugeWrap">
+  <canvas id="gauge" width="124" height="124"></canvas>
+  <div id="gaugeLbl">라디오 균형</div>
+</div>
+
+<div class="hud panel" id="lcd">
+  <div class="lbl">RADIO</div>
+  <div class="screen" id="lcdText">FM 98.1 소리봉 방송</div>
+</div>
+
+<div class="hud panel" id="help">
+  <kbd>W</kbd><kbd>S</kbd> 걷기 · <kbd>A</kbd><kbd>D</kbd> 방향 · <kbd>Shift</kbd> 달리기<br>
+  <kbd>Space</kbd> 몸 숙이기 (뒤로 기울 때)<br>
+  <kbd>Q</kbd><kbd>E</kbd> 좌우로 버티기<br>
+  <kbd>F</kbd>·<kbd>Space</kbd> 라디오 줍기 · 마우스 드래그 시점
+</div>
+
+<div class="hud" id="toast"></div>
+<div class="hud panel" id="prompt" hidden><kbd>F</kbd> 또는 <kbd>Space</kbd> 라디오 줍기</div>
+<div class="hud" id="marker" hidden>라디오 0 m</div>
+
+<div id="touch" hidden>
+  <div class="pad move">
+    <span></span><button class="tbtn" data-key="KeyW" type="button" aria-label="앞으로">▲</button><span></span>
+    <button class="tbtn" data-key="KeyA" type="button" aria-label="왼쪽으로">◀</button><button class="tbtn" data-key="KeyS" type="button" aria-label="뒤로">▼</button><button class="tbtn" data-key="KeyD" type="button" aria-label="오른쪽으로">▶</button>
+  </div>
+  <div class="pad act">
+    <button class="tbtn" data-key="KeyQ" type="button">Q 좌</button><button class="tbtn" data-key="KeyE" type="button">E 우</button>
+    <button class="tbtn" data-key="ShiftLeft" type="button">달리기</button><button class="tbtn" data-key="Space" type="button">숙이기</button>
+    <button class="tbtn wide" data-key="KeyF" type="button">줍기</button>
+  </div>
+</div>
+
+<div class="overlay" id="titleScreen">
+  <div class="card">
+    <div class="eyebrow">소리봉 · 해발 980 m · 늦가을 오후</div>
+    <h1>지게 <span>라디오</span></h1>
+    <p>할아버지의 낡은 라디오를 지게에 얹고 소리봉 꼭대기까지 올라가세요. 마을 포장길을 지나면 가파른 비탈과 나무뿌리 가득한 산길이 이어지고, 라디오는 자꾸 뒤로 넘어갑니다. 떨어진 라디오는 탱탱볼처럼 세 번까지 튀다가 멈춥니다. 주워서 다시 지고 가세요.</p>
+    <dl class="keys">
+      <dt><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></dt><dd>걷기와 방향 바꾸기</dd>
+      <dt><kbd>Shift</kbd></dt><dd>달리기 (빠르지만 라디오가 크게 출렁임)</dd>
+      <dt><kbd>Space</kbd></dt><dd>몸을 앞으로 숙여 뒤로 쏠린 라디오 잡기 (대신 느려짐)</dd>
+      <dt><kbd>Q</kbd> <kbd>E</kbd></dt><dd>굽은 길에서 좌우로 버티기</dd>
+      <dt><kbd>F</kbd></dt><dd>떨어진 라디오 줍기 (가까이에서 Space도 됨)</dd>
+    </dl>
+    <button class="btn" id="startBtn" type="button">산 오르기</button>
+  </div>
+</div>
+
+<div class="overlay" id="winScreen" hidden>
+  <div class="card">
+    <div class="eyebrow" id="winEyebrow">소리봉 정상 · 해발 980 m</div>
+    <h1>정상에 <span>도착</span></h1>
+    <p id="winMsg">라디오 소리가 산 아래 마을까지 울려 퍼집니다.</p>
+    <div class="stats">
+      <div><b id="wTime">00:00.0</b><span>걸린 시간</span></div>
+      <div><b id="wDrops">0</b><span>떨어뜨린 횟수</span></div>
+      <div><b id="wBest">--</b><span>최고 기록</span></div>
+    </div>
+    <button class="btn" id="againBtn" type="button">다시 오르기</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
