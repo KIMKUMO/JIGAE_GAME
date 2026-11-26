@@ -928,14 +928,14 @@ function update(dt){
   // balance
   if(R.state==='carried'&&playing){
     const sp=P.speed;
-    let fp=0,fr=0;
+    let fp=0,fr=0;const pv0=B.pv;
     fp+=clamp(P.accel*0.085,-0.4,0.4);
     fp+=vGrade*sp*0.55;
     fp+=Math.sin(P.step*2)*sp*0.03;
     if(sp>4.8){const rs=(sp-4.4)/2.4;fp+=Math.abs(Math.sin(P.step*2))*0.4*rs;fr+=Math.sin(P.step)*0.3*rs;} // 달리면 라디오가 크게 출렁인다
     fp+=fbm(clock*0.9,3.3)*0.3*(sp/4.4);
     fp-=P.lean*1.5;
-    fr+=clamp(-P.lat*0.07,-0.3,0.3);
+    fr+=clamp(-P.lat*0.085,-0.36,0.36);   // sideways shove when you change walking direction (a little stronger)
     fr-=sideSlope*0.6*Math.min(1,sp/4.4);
     fr+=fbm(clock*0.8,17.1)*0.4*(sp/4.4);
     fr+=P.side*1.05;
@@ -960,9 +960,10 @@ function update(dt){
     {const dw=P.yawVel-P.yawVelPrev;P.yawVelPrev=P.yawVel;B.rv+=clamp(-dw*0.04,-0.25,0.25);
      if(P.shake>2.2){const ex=P.shake-2.2,dir=Math.abs(B.roll)>0.02?Math.sign(B.roll):(Math.sign(P.yawVel)||1);fr+=dir*ex*0.35;fp+=ex*0.12;}}
     for(const b of bumpsNear(P.x,P.z)){b.cd=Math.max(0,b.cd-dt);if(b.cd>0)continue;const dx=b.x-P.x,dz=b.z-P.z;if(dx*dx+dz*dz<0.55&&sp>0.4){b.cd=1.5;const sev=lerp(0.55,1.05,clamp(P.y/SUMMIT_H,0,1));B.pv+=(0.75+Math.random()*0.5)*sev*(sp/4.4);B.rv+=(Math.random()-.5)*1.4*sev*(sp/4.4);hips.position.y=1.02;}}
+    B.pv=pv0+(B.pv-pv0)*0.7;   // bumps, steps and logs tip the radio back 30% less
     if(P.grace>0){P.grace-=dt;fp*=0.35;fr*=0.35;}
-    const KF=3.0,K=9,G=6,C=2.6,SAT=0.45;
-    const pa=KF*fp-K*clamp(B.pitch,-SAT,SAT)+G*Math.sin(B.pitch)-C*B.pv;
+    const KF=3.0,K=9,G=6,C=2.6,SAT=0.45,KFP=KF*0.73;   // backward push 27% weaker than sideways
+    const pa=KFP*fp-K*clamp(B.pitch,-SAT,SAT)+G*Math.sin(B.pitch)-C*B.pv;
     const ra=KF*fr-K*clamp(B.roll,-SAT,SAT)+G*Math.sin(B.roll)-C*B.rv;
     B.pv+=pa*dt;B.rv+=ra*dt;B.pitch+=B.pv*dt;B.roll+=B.rv*dt;
     if(B.pitch<FWD_LIMIT){B.pitch=FWD_LIMIT;if(B.pv<0)B.pv*=-0.2;}
@@ -1038,31 +1039,7 @@ function updateCamera(dt){
 }
 
 // ---------------------------------------------------------------- HUD
-const gc=$('gauge'),gx=gc.getContext('2d');
 const lcd=$('lcdText');let lcdMode='';
-function drawGauge(){
-  const dpr=Math.min(window.devicePixelRatio||1,2),S=gc.clientWidth||124;
-  if(gc.width!==Math.round(S*dpr)){gc.width=gc.height=Math.round(S*dpr);}
-  gx.setTransform(dpr,0,0,dpr,0,0);gx.clearRect(0,0,S,S);
-  const c=S/2,Rr=S/2-4;
-  gx.fillStyle='rgba(14,26,22,.8)';gx.beginPath();gx.arc(c,c,Rr,0,Math.PI*2);gx.fill();
-  const nr=NO_RETURN/FALL*Rr;
-  gx.fillStyle='rgba(228,87,60,.30)';gx.beginPath();gx.arc(c,c,Rr,0,Math.PI*2);gx.arc(c,c,nr,0,Math.PI*2,true);gx.fill();
-  // frame side: radio can't fall forward through the 지게
-  const fl=c+FWD_LIMIT/FALL*Rr;
-  gx.fillStyle='rgba(243,236,220,.12)';gx.fillRect(c-Rr,c-Rr,S,fl-(c-Rr));
-  gx.strokeStyle='rgba(243,236,220,.22)';gx.lineWidth=1;
-  gx.beginPath();gx.moveTo(c-Rr+6,c);gx.lineTo(c+Rr-6,c);gx.moveTo(c,c-Rr+6);gx.lineTo(c,c+Rr-6);gx.stroke();
-  gx.beginPath();gx.arc(c,c,nr,0,Math.PI*2);gx.stroke();
-  gx.fillStyle='rgba(243,236,220,.6)';gx.font='600 10px "IBM Plex Sans KR", sans-serif';gx.textAlign='center';gx.textBaseline='middle';
-  gx.fillText('지게',c,c-Rr+12);gx.fillText('뒤',c,c+Rr-11);gx.fillText('좌',c-Rr+11,c);gx.fillText('우',c+Rr-11,c);
-  let px=c,py=c,col='#ffb23e',danger=false;
-  if(R.state==='carried'){px=c+clamp(B.roll/FALL,-1,1)*Rr;py=c+clamp(B.pitch/FALL,-1,1)*Rr;danger=Math.hypot(Math.max(0,B.pitch),B.roll)>NO_RETURN*0.85;if(danger)col='#e4573c';}
-  else col='rgba(243,236,220,.25)';
-  gx.fillStyle=col;gx.beginPath();gx.arc(px,py,9,0,Math.PI*2);gx.fill();
-  gx.strokeStyle='rgba(0,0,0,.35)';gx.lineWidth=2;gx.stroke();
-  return danger;
-}
 const projV=new THREE.Vector3();
 const compassEl=$('compass');
 function updateHUD(){
@@ -1077,9 +1054,9 @@ function updateHUD(){
   compassEl.style.transform='rotate('+(-rel).toFixed(3)+'rad)';
   compassEl.style.visibility=fogMix>0.5?'hidden':'visible';   // the compass is useless in the mist
   $('time').textContent=fmt(elapsed);
-  const danger=drawGauge();
+  const danger=R.state==='carried'&&Math.hypot(Math.max(0,B.pitch),B.roll)>NO_RETURN*0.85;   // the balance gauge is gone; only its warnings remain
   const lbl=$('gaugeLbl');
-  let msg='라디오 균형',warn=false;
+  let msg='',warn=false;
   if(R.state==='carried'&&game==='play'){
     if(P.shake>2.2){warn=true;msg='화면을 흔들지 마세요!';}
     else if(P.zone===Z_WIND&&WIND.on>0&&WIND.str>0.5){warn=true;const wr=WIND.x*(-Math.cos(P.yaw))+WIND.z*Math.sin(P.yaw);msg=wr>0?'돌풍! 오른쪽으로 밀려요 Q':'돌풍! 왼쪽으로 밀려요 E';}
