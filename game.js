@@ -50,7 +50,7 @@ const _px=[],_pz=[];
 {
   let x=START_R*Math.cos(THETA0),z=START_R*Math.sin(THETA0),s=0;const ds=0.5,e=1.5;_px.push(x);_pz.push(z);
   for(let n=0;n<9000;n++){
-    const r=Math.hypot(x,z);if(r<8)break;
+    const r=Math.hypot(x,z);if(r<4)break;
     // steer on the large-scale shape (mountain + spurs); small bumps would trap it on little hillocks
     let ux=(guideHeight(x+e,z)-guideHeight(x-e,z))/(2*e),uz=(guideHeight(x,z+e)-guideHeight(x,z-e))/(2*e);
     const sl=Math.hypot(ux,uz)||1e-4;ux/=sl;uz/=sl;
@@ -146,7 +146,7 @@ const scene=new THREE.Scene();
 const FOG=0xe6d3b0;
 scene.background=new THREE.Color(FOG);
 scene.fog=new THREE.Fog(FOG,220,1500);
-const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,0.1,3200);
+const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,0.05,3200);
 
 scene.add(new THREE.HemisphereLight(0xd6e6ff,0x5d4a30,0.72));
 const sun=new THREE.DirectionalLight(0xffe7c4,0.9);
@@ -318,6 +318,7 @@ function box(w,h,d,m){const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.c
 function cyl(rt,rb,h,m,seg){const o=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg||8),m);o.castShadow=true;return o;}
 const M={skin:lam(0xe2b48c),white:lam(0xece3cc),pants:lam(0x4a586b),wood:lam(0x8b5a2b),woodDark:lam(0x5e3c1e),straw:lam(0xd6b25e),dark:lam(0x2b2520)};
 
+let headMesh=null;
 const player=new THREE.Group();scene.add(player);
 const hips=new THREE.Group();hips.position.y=0.92;player.add(hips);
 const legs=[];
@@ -325,7 +326,7 @@ for(const sx of [-1,1]){const g=new THREE.Group();g.position.set(0.11*sx,0,0);co
 const torso=new THREE.Group();hips.add(torso);
 {const c=cyl(0.2,0.25,0.64,M.white);c.position.y=0.32;torso.add(c);
  const b=cyl(0.255,0.255,0.07,M.pants);b.position.y=0.04;torso.add(b);
- const hd=new THREE.Mesh(new THREE.SphereGeometry(0.15,12,10),M.skin);hd.position.y=0.8;hd.castShadow=true;torso.add(hd);
+ const hd=new THREE.Mesh(new THREE.SphereGeometry(0.15,12,10),M.skin);hd.position.y=0.8;hd.castShadow=true;torso.add(hd);headMesh=hd;
  const brim=cyl(0.33,0.33,0.025,M.straw,16);brim.position.y=0.9;torso.add(brim);
  const crown=cyl(0.12,0.15,0.13,M.straw,12);crown.position.y=0.97;torso.add(crown);
  const band=cyl(0.151,0.151,0.03,M.dark,12);band.position.y=0.93;torso.add(band);}
@@ -358,6 +359,10 @@ function makeRadio(){
   const ant=cyl(0.006,0.009,0.55,lam(0xd0d0d0),5);ant.position.set(0.22+0.094,0.35+0.258,0.06);ant.rotation.z=-0.35;g.add(ant);
   return g;
 }
+// In first person the body is hidden from the camera but still casts its shadow on the ground.
+const bodyMeshes=[];
+player.traverse(o=>{if(o.isMesh){o.material=o.material.clone();bodyMeshes.push(o);}});
+function setBodyVisible(v){for(const m of bodyMeshes){m.material.colorWrite=v;m.material.depthWrite=v;}}
 const radio=makeRadio();radioPivot.add(radio);
 // radioSquash sits at the contact point with no rotation so a bounce can squash the radio in world space
 const radioSquash=new THREE.Group();scene.add(radioSquash);
@@ -415,21 +420,20 @@ function setMuted(m){muted=m;$('muteBtn').firstChild.nodeValue=m?'소리 켜기 
 $('muteBtn').addEventListener('click',()=>{initAudio();setMuted(!muted);canvas.focus();});
 
 // ---------------------------------------------------------------- game state
-const P={x:0,z:0,y:0,yaw:0,yawRate:0,speed:0,accel:0,lean:0,side:0,step:0,busy:0,pathI:0,grace:0};
+const P={x:0,z:0,y:0,yaw:0,pitch:0,vx:0,vz:0,speed:0,accel:0,lat:0,lean:0,side:0,step:0,busy:0,pathI:0,grace:0};
 const B={pitch:0,roll:0,pv:0,rv:0};
 const R={state:'carried',pos:new THREE.Vector3(),vel:new THREE.Vector3(),ang:new THREE.Vector3(),q:new THREE.Quaternion(),rest:0,pick:0,from:new THREE.Vector3(),fromQ:new THREE.Quaternion(),bounces:0,air:false,fallT:0,squash:0};
 const MAX_BOUNCES=3; // 탱탱볼처럼 최대 3번 튀고, 4번째로 땅에 닿으면 그 자리에서 멈춘다
 let game='title',elapsed=0,drops=0,clock=0,titleT=0,toastT=0;
 const FALL=0.85,NO_RETURN=0.62,FWD_LIMIT=-0.12;
 const keys=new Set();
-const camState={orbit:0,dist:7.2,pos:new THREE.Vector3(),look:new THREE.Vector3(),drag:false,lx:0,idle:0};
+const camState={pos:new THREE.Vector3(),look:new THREE.Vector3(),drag:false,lx:0,ly:0};
 
 function reset(){
-  const i=8;P.x=PX[i];P.z=PZ[i];P.yaw=Math.atan2(PX[i+4]-PX[i],PZ[i+4]-PZ[i]);P.yawRate=0;P.speed=0;P.accel=0;P.lean=0;P.side=0;P.busy=0;P.pathI=i;
+  const i=8;P.x=PX[i];P.z=PZ[i];P.yaw=Math.atan2(PX[i+4]-PX[i],PZ[i+4]-PZ[i]);P.pitch=-0.05;P.vx=0;P.vz=0;P.speed=0;P.accel=0;P.lat=0;P.lean=0;P.side=0;P.busy=0;P.pathI=i;
   P.y=groundH(P.x,P.z);
   B.pitch=0;B.roll=0;B.pv=0;B.rv=0;
   attachRadio();elapsed=0;drops=0;$('drops').textContent='0';
-  camState.orbit=0;
 }
 function attachRadio(){radioPivot.add(radio);radio.position.set(0,0,0);radio.rotation.set(0,0,0);R.state='carried';R.squash=0;radioSquash.scale.set(1,1,1);marker.visible=false;}
 function syncHolder(){
@@ -451,11 +455,23 @@ addEventListener('keydown',e=>{
 addEventListener('keyup',e=>keys.delete(e.code));
 addEventListener('blur',()=>keys.clear());
 const k=c=>keys.has(c);
-canvas.addEventListener('pointerdown',e=>{camState.drag=true;camState.lx=e.clientX;canvas.setPointerCapture(e.pointerId);canvas.focus();});
-canvas.addEventListener('pointermove',e=>{if(!camState.drag)return;camState.orbit-= (e.clientX-camState.lx)*0.006;camState.lx=e.clientX;camState.idle=0;});
+// mouse look: click the view to lock the mouse (Esc releases it). Where pointer lock is not
+// available (touch, some embedded frames) dragging the view does the same.
+const LOOK_SENS=0.0022;
+let locked=false;
+const isTouch=!!(window.matchMedia&&matchMedia('(pointer: coarse)').matches);
+function look(dx,dy){P.yaw-=dx*LOOK_SENS;P.pitch=clamp(P.pitch-dy*LOOK_SENS,-1.35,1.25);}
+function requestLook(){
+  if(game!=='play'||isTouch||!canvas.requestPointerLock)return;
+  try{const pr=canvas.requestPointerLock();if(pr&&pr.catch)pr.catch(()=>{});}catch(e){}
+}
+function updateLookHint(){$('lookHint').hidden=locked||game!=='play'||isTouch;}
+document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===canvas;updateLookHint();});
+addEventListener('mousemove',e=>{if(locked)look(e.movementX||0,e.movementY||0);});
+canvas.addEventListener('pointerdown',e=>{canvas.focus();if(e.pointerType==='mouse'&&!locked)requestLook();camState.drag=true;camState.lx=e.clientX;camState.ly=e.clientY;try{canvas.setPointerCapture(e.pointerId);}catch(_){}});
+canvas.addEventListener('pointermove',e=>{if(!camState.drag||locked)return;look((e.clientX-camState.lx)*1.4,(e.clientY-camState.ly)*1.4);camState.lx=e.clientX;camState.ly=e.clientY;});
 canvas.addEventListener('pointerup',()=>{camState.drag=false;});
 canvas.addEventListener('pointercancel',()=>{camState.drag=false;});
-canvas.addEventListener('wheel',e=>{camState.dist=clamp(camState.dist+e.deltaY*0.006,4.5,13);e.preventDefault();},{passive:false});
 
 // touch pad
 if(window.matchMedia&&matchMedia('(pointer: coarse)').matches){
@@ -469,7 +485,8 @@ if(window.matchMedia&&matchMedia('(pointer: coarse)').matches){
 function startGame(){
   initAudio();if(AC&&AC.state==='suspended')AC.resume();
   reset();game='play';document.body.classList.remove('title');$('titleScreen').hidden=true;$('winScreen').hidden=true;canvas.focus();
-  toast('포장길이 끝나면 산길이 시작돼요',2.4);
+  setBodyVisible(false);requestLook();updateLookHint();
+  toast('길은 없어요. 리본과 돌무더기를 찾아보세요',2.6);
 }
 $('startBtn').addEventListener('click',startGame);
 $('againBtn').addEventListener('click',startGame);
@@ -487,7 +504,7 @@ function dropRadio(){
   _v.set(0,0.17,0).applyQuaternion(R.q);R.pos.add(_v);
   const pb=Math.max(0,B.pitch),dirx=-fx*pb+rx*B.roll,dirz=-fz*pb+rz*B.roll,dl=Math.hypot(dirx,dirz)||1;
   const tdx=dirx/dl,tdz=dirz/dl;
-  R.vel.set(fx*P.speed*0.5+tdx*3.0,3.4,fz*P.speed*0.5+tdz*3.0);
+  R.vel.set(P.vx*0.5+tdx*3.0,3.4,P.vz*0.5+tdz*3.0);
   _v.set(tdx,0,tdz);R.ang.crossVectors(UP,_v).multiplyScalar(6.5);
   syncHolder();
   radioHolder.add(radio);radio.position.set(0,-0.17,0);radio.scale.set(1,1,1);radio.rotation.set(0,0,0);
@@ -537,7 +554,7 @@ function radioDist(){return Math.hypot(R.pos.x-P.x,R.pos.z-P.z);}
 function canPickup(){return game==='play'&&R.state==='ground'&&radioDist()<2.4;}
 function tryPickup(){
   if(!canPickup())return;
-  R.state='pickup';R.pick=0;R.from.copy(R.pos);R.fromQ.copy(R.q);P.busy=0.6;P.speed=0;marker.visible=false;playClick();
+  R.state='pickup';R.pick=0;R.from.copy(R.pos);R.fromQ.copy(R.q);P.busy=0.6;P.vx=0;P.vz=0;P.speed=0;marker.visible=false;playClick();
 }
 function updatePickup(dt){
   R.pick+=dt/0.6;const t=Math.min(1,R.pick),e=t*t*(3-2*t);
@@ -556,57 +573,63 @@ function update(dt){
   if(playing)elapsed+=dt;
   // input
   let fwdIn=((k('KeyW')||k('ArrowUp'))?1:0)-((k('KeyS')||k('ArrowDown'))?1:0);
-  let turnIn=((k('KeyA')||k('ArrowLeft'))?1:0)-((k('KeyD')||k('ArrowRight'))?1:0);
+  let strafeIn=((k('KeyD')||k('ArrowRight'))?1:0)-((k('KeyA')||k('ArrowLeft'))?1:0);   // 옆걸음
   const runT=playing&&(k('ShiftLeft')||k('ShiftRight'));            // 달리기
   const leanT=playing&&R.state==='carried'&&k('Space')?1:0;         // 몸 숙이기
   const sideT=playing?((k('KeyE')?1:0)-(k('KeyQ')?1:0)):0;
-  if(!playing||P.busy>0){fwdIn=0;turnIn=0;}
+  if(!playing||P.busy>0){fwdIn=0;strafeIn=0;}
   P.busy=Math.max(0,P.busy-dt);
   P.lean+=(leanT-P.lean)*Math.min(1,dt*7);
   P.side+=(sideT-P.side)*Math.min(1,dt*7);
 
-  const turnMax=lerp(2.0,1.25,clamp(Math.abs(P.speed)/4.4,0,1));
-  P.yawRate+=(turnIn*turnMax-P.yawRate)*Math.min(1,dt*5);
-  P.yaw+=P.yawRate*dt;
+  // the body faces where you look; the mouse sets P.yaw directly
   const fx=Math.sin(P.yaw),fz=Math.cos(P.yaw),rx=-Math.cos(P.yaw),rz=Math.sin(P.yaw);
+  let mx=fx*fwdIn+rx*strafeIn,mz=fz*fwdIn+rz*strafeIn;const ml=Math.hypot(mx,mz);if(ml>0){mx/=ml;mz/=ml;}
   const np=nearestPath(P.x,P.z,1);const onTrail=!!(np&&np.d<TRAIL_W);    // 옛 등산로 흔적 위인지
   const hereSlope=slopeAt(P.x,P.z);
   if(np&&np.d<12)P.pathI=np.i;
-  const grade=(groundH(P.x+fx*0.6,P.z+fz*0.6)-groundH(P.x-fx*0.6,P.z-fz*0.6))/1.2;
+  const mGrade=ml>0?(groundH(P.x+mx*0.6,P.z+mz*0.6)-groundH(P.x-mx*0.6,P.z-mz*0.6))/1.2:0;
   const sideSlope=(groundH(P.x+rx*0.5,P.z+rz*0.5)-groundH(P.x-rx*0.5,P.z-rz*0.5))/1.0;
   let maxSpd=(runT&&fwdIn>0?6.8:4.4)*(onTrail?1:hereSlope>0.6?0.6:0.82)*(1-P.lean*0.5);
-  maxSpd*=clamp(1-Math.max(0,grade)*1.1,0.3,1);
+  if(fwdIn<0)maxSpd=Math.min(maxSpd,1.8);else if(fwdIn===0&&strafeIn!==0)maxSpd=Math.min(maxSpd,2.8);
+  maxSpd*=clamp(1-Math.max(0,mGrade)*1.1,0.3,1);
   // too steep to walk straight up: go around, or zig-zag across the slope
-  const tooSteep=grade>1.05&&fwdIn>0;          // 절벽(경사 100% 이상)은 못 오른다
+  const tooSteep=ml>0&&mGrade>1.05;          // 절벽(경사 100% 이상)은 못 오른다
   if(tooSteep){maxSpd=0;if(toastT<=0&&playing)toast('너무 가팔라요. 비스듬히 오르거나 다른 길을 찾으세요',2.2);}
-  const target=fwdIn>0?maxSpd:fwdIn<0?-1.7:0;
-  const prev=P.speed;P.speed+=clamp(target-P.speed,-dt*7,dt*4.5);
-  P.accel=lerp(P.accel,(P.speed-prev)/Math.max(dt,1e-3),0.3);
-  P.x+=fx*P.speed*dt;P.z+=fz*P.speed*dt;
+  const tvx=ml>0?mx*maxSpd:0,tvz=ml>0?mz*maxSpd:0;
+  const pvx=P.vx,pvz=P.vz;
+  {let dvx=tvx-P.vx,dvz=tvz-P.vz;const dvl=Math.hypot(dvx,dvz),rate=(Math.hypot(tvx,tvz)>Math.hypot(P.vx,P.vz)?4.5:7)*dt;
+   if(dvl>rate){dvx*=rate/dvl;dvz*=rate/dvl;}P.vx+=dvx;P.vz+=dvz;}
+  // acceleration in the body frame: only real changes of walking speed/direction show up here,
+  // so looking around never moves the radio by itself
+  {const ax=(P.vx-pvx)/Math.max(dt,1e-3),az=(P.vz-pvz)/Math.max(dt,1e-3);
+   P.accel=lerp(P.accel,ax*fx+az*fz,0.3);P.lat=lerp(P.lat,ax*rx+az*rz,0.3);}
+  P.x+=P.vx*dt;P.z+=P.vz*dt;
   // trees and big rocks block the way
   {const bx=Math.floor((P.x+HALF)/BLK),bz=Math.floor((P.z+HALF)/BLK);
    for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const cx=bx+dx,cz=bz+dz;if(cx<0||cz<0||cx>=BLN||cz>=BLN)continue;
      for(const o of blockGrid[cz*BLN+cx]){const ox=P.x-o.x,oz=P.z-o.z,d=Math.hypot(ox,oz),min=o.r+0.32;
-       if(d<min&&d>1e-4){P.x=o.x+ox/d*min;P.z=o.z+oz/d*min;P.speed*=0.9;}}}}
-  if(grade>1.1&&slopeAt(P.x,P.z)>1.1){P.x-=fx*0.6*dt;P.z-=fz*0.6*dt;} // slide off cliff faces
+       if(d<min&&d>1e-4){const nx=ox/d,nz=oz/d;P.x=o.x+nx*min;P.z=o.z+nz*min;const vn=P.vx*nx+P.vz*nz;if(vn<0){P.vx-=vn*nx;P.vz-=vn*nz;}}}}}
+  if(ml>0&&mGrade>1.1&&slopeAt(P.x,P.z)>1.1){P.x-=mx*0.6*dt;P.z-=mz*0.6*dt;} // slide off cliff faces
   const pr=Math.hypot(P.x,P.z);if(pr>395){P.x*=395/pr;P.z*=395/pr;}
   P.y=groundH(P.x,P.z);
-  P.step+=Math.abs(P.speed)*dt*2.3;
+  P.speed=Math.hypot(P.vx,P.vz);
+  P.step+=P.speed*dt*2.3;
+  const vGrade=P.speed>0.1?(groundH(P.x+P.vx/P.speed*0.6,P.z+P.vz/P.speed*0.6)-groundH(P.x-P.vx/P.speed*0.6,P.z-P.vz/P.speed*0.6))/1.2:0;
 
   // balance
   if(R.state==='carried'&&playing){
-    const sp=Math.max(0,P.speed);
+    const sp=P.speed;
     let fp=0,fr=0;
-    fp+=P.accel*0.085;
-    fp+=grade*sp*0.7;
-    fp+=Math.abs(P.yawRate)*sp*0.07;
+    fp+=clamp(P.accel*0.085,-0.4,0.4);
+    fp+=vGrade*sp*0.7;
     fp+=Math.sin(P.step*2)*sp*0.03;
     if(sp>4.8){const rs=(sp-4.4)/2.4;fp+=Math.abs(Math.sin(P.step*2))*0.4*rs;fr+=Math.sin(P.step)*0.3*rs;} // 달리면 라디오가 크게 출렁인다
     if(onTrail&&sp>1&&Math.random()<dt*1.2){B.pv+=Math.random()*0.3*(sp/4.4);B.rv+=(Math.random()-.5)*0.4*(sp/4.4);}
     fp+=fbm(clock*0.9,3.3)*0.3*(sp/4.4);
     fp-=P.lean*1.5;
-    fr+=P.yawRate*sp*0.22;
-    fr-=sideSlope*(0.35+0.6*Math.min(1,sp/4.4)); // 옆으로 기운 비탈길
+    fr+=clamp(-P.lat*0.07,-0.3,0.3);               // 걸으며 방향을 틀면 원심력 (혼자서는 떨어뜨릴 만큼 크지 않음)
+    fr-=sideSlope*0.6*Math.min(1,sp/4.4);          // 옆으로 기운 비탈 (멈춰 있으면 영향 없음)
     fr+=fbm(clock*0.8,17.1)*0.4*(sp/4.4);
     fr+=P.side*1.05;
     if(!onTrail&&sp>0.5&&Math.random()<dt*1.6){const rough=hereSlope>0.6?1:0.6;B.pv+=(Math.random()*0.8)*rough*(sp/4.4);B.rv+=(Math.random()-.5)*1.1*rough*(sp/4.4);}
@@ -622,7 +645,7 @@ function update(dt){
     if(B.pitch<FWD_LIMIT){B.pitch=FWD_LIMIT;if(B.pv<0)B.pv*=-0.2;}
     if(B.pitch>FALL||Math.abs(B.roll)>FALL)dropRadio();
   }
-  if(R.state==='carried'){radioPivot.rotation.set(-B.pitch,0,B.roll);radio.position.y=Math.abs(Math.sin(P.step*2))*0.012*Math.min(1,Math.abs(P.speed));}
+  if(R.state==='carried'){radioPivot.rotation.set(-B.pitch,0,B.roll);radio.position.y=Math.abs(Math.sin(P.step*2))*0.012*Math.min(1,P.speed);}
   else if(R.state==='falling'){R.squash=Math.max(0,R.squash-dt*4.5);updateRadioPhysics(dt);}
   else if(R.state==='ground'){R.squash=Math.max(0,R.squash-dt*4.5);settleRadio(dt);}
   else if(R.state==='pickup')updatePickup(dt);
@@ -651,12 +674,13 @@ function update(dt){
 
 function win(){
   game='win';playWin();
+  if(document.exitPointerLock&&locked)document.exitPointerLock();updateLookHint();
   const t=fmt(elapsed);$('wTime').textContent=t;$('wDrops').textContent=drops;
   let best=null;try{best=parseFloat(localStorage.getItem('jige-radio-best'));}catch(e){}
   if(!best||elapsed<best){best=elapsed;try{localStorage.setItem('jige-radio-best',String(elapsed));}catch(e){}}
   $('wBest').textContent=fmt(best);
   $('winMsg').textContent=drops===0?'한 번도 떨어뜨리지 않았어요. 라디오 소리가 산 아래 마을까지 울려 퍼집니다.':drops<=3?'몇 번 넘어졌지만 끝까지 지고 왔어요. 정상에서 듣는 라디오가 각별합니다.':'라디오가 '+drops+'번이나 굴렀지만 아직 잘 나옵니다. 튼튼한 라디오예요.';
-  setTimeout(()=>{$('winScreen').hidden=false;},900);
+  setTimeout(()=>{if(game==='win')$('winScreen').hidden=false;},900);
 }
 function fmt(s){const m=Math.floor(s/60),r=s-m*60;return String(m).padStart(2,'0')+':'+(r<10?'0':'')+r.toFixed(1);}
 
@@ -666,17 +690,19 @@ function updateCamera(dt){
     camera.position.set(Math.cos(a)*560,250,Math.sin(a)*560);camera.lookAt(0,70,0);
     camState.pos.copy(camera.position);camState.look.set(0,70,0);return;
   }
-  if(!camState.drag){camState.idle+=dt;if(camState.idle>1.2)camState.orbit*=Math.exp(-dt*1.2);}
-  let yaw=P.yaw+camState.orbit,dist=camState.dist,ht=3.1+dist*0.12;
-  let lookX=P.x,lookY=P.y+1.5,lookZ=P.z;
-  if(game==='win'){yaw=P.yaw+clock*0.25;dist=11;ht=4.5;}
-  if(R.state==='falling'||R.state==='ground'){const d=radioDist();dist+=Math.min(4,d*0.25);lookX=lerp(P.x,R.pos.x,0.3);lookZ=lerp(P.z,R.pos.z,0.3);}
-  const cx=lookX-Math.sin(yaw)*dist,cz=lookZ-Math.cos(yaw)*dist;
-  let cy=P.y+ht;cy=Math.max(cy,groundH(cx,cz)+1.2);
-  const kk=1-Math.exp(-dt*(game==='play'&&elapsed<1.5?2:4.5));
-  camState.pos.lerp(_v.set(cx,cy,cz),kk);camState.look.lerp(_v2.set(lookX,lookY,lookZ),1-Math.exp(-dt*8));
-  camera.position.copy(camState.pos);camera.lookAt(camState.look);
-  const fov=lerp(camera.fov,game==='play'&&P.speed>4.8?65:58,1-Math.exp(-dt*3));
+  if(game==='win'){ // step back and circle the summit to celebrate
+    setBodyVisible(true);
+    const yaw=P.yaw+clock*0.25,cx=P.x-Math.sin(yaw)*9,cz=P.z-Math.cos(yaw)*9;
+    camState.pos.lerp(_v.set(cx,Math.max(P.y+4,groundH(cx,cz)+1.2),cz),1-Math.exp(-dt*3));
+    camera.position.copy(camState.pos);camera.lookAt(P.x,P.y+1.5,P.z);return;
+  }
+  // first person: eyes at the head (so leaning and walking bob the view), looking where the mouse points
+  headMesh.getWorldPosition(_v);
+  _v.x+=Math.sin(P.yaw)*0.12;_v.z+=Math.cos(P.yaw)*0.12;_v.y+=0.05;
+  _v.y=Math.max(_v.y,groundH(_v.x,_v.z)+0.4);
+  camera.position.copy(_v);camState.pos.copy(_v);
+  camera.rotation.set(P.pitch,P.yaw+Math.PI,0,'YXZ');
+  const fov=lerp(camera.fov,P.speed>4.8?78:70,1-Math.exp(-dt*3));
   if(Math.abs(fov-camera.fov)>0.01){camera.fov=fov;camera.updateProjectionMatrix();}
 }
 
