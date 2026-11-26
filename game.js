@@ -429,10 +429,15 @@ function updateRadioPhysics(dt){
           R.vel.set(0,0,0);R.ang.set(0,0,0);R.state='ground';playThud(3);break;
         }
         // 탱탱볼: 매번 확실히 다시 튀어 오르고, 튈수록 조금씩 낮아진다
-        const out=Math.max(-vn*0.9,6.6-R.bounces*1.2);   // 약 1.5m → 0.9m → 0.45m 높이로 튄다
-        R.vel.addScaledVector(_n,-vn).multiplyScalar(0.6);
-        _v2.copy(_n).lerp(UP,0.6).normalize();R.vel.addScaledVector(_v2,out); // 위쪽으로 튀게 해서 비탈 아래로 멀리 굴러가지 않게
-        const hs=Math.hypot(R.vel.x,R.vel.z);if(hs>2.4){R.vel.x*=2.4/hs;R.vel.z*=2.4/hs;}
+        const out=clamp(-vn*0.9,6.6-R.bounces*1.2,7);   // 약 1.5m → 0.9m → 0.45m, 아무리 세게 떨어져도 2.5m까지만
+        // 높은 곳에서 떨어져 세게 부딪힐수록 옆으로도 멀리 튀어 나간다
+        // 지게 높이에서 떨어지면 한 번에 2m쯤, 10m 위에서 떨어지면 6m쯤 날아가고 이후 튕김에도 일부 이어진다
+        const impact=-vn;
+        let hx=R.vel.x-_n.x*vn,hz=R.vel.z-_n.z*vn;let hl=Math.hypot(hx,hz);
+        if(hl<0.3){hx=_n.x;hz=_n.z;hl=Math.hypot(hx,hz);if(hl<0.05){const a=Math.random()*Math.PI*2;hx=Math.cos(a);hz=Math.sin(a);hl=1;}} // 거의 수직이면 비탈 아래쪽으로
+        const fly=Math.min(6,Math.max(0.3*impact,0.55*hl));
+        _v2.copy(_n).lerp(UP,0.6).normalize();
+        R.vel.set(hx/hl*fly,0,hz/hl*fly).addScaledVector(_v2,out);
         R.ang.set(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize().multiplyScalar(5+Math.random()*5);
         playBoing(R.bounces);
       }else if(vn<0){R.vel.addScaledVector(_n,-vn);}
