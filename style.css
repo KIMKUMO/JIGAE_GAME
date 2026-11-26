@@ -81,3 +81,7 @@ kbd{font-family:var(--mono);font-size:11px;background:rgba(243,236,220,.12);bord
   #lcd .lbl{display:none}
 }
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
+
+#errorBox{position:fixed;z-index:20;left:50%;top:50%;transform:translate(-50%,-50%);max-width:min(440px,calc(100vw - 32px));background:var(--panel);border:1px solid var(--maple);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:6px;line-height:1.55}
+#errorBox b{font-family:var(--display);font-weight:400;font-size:20px;color:var(--hanji)}
+#errorBox span{font-size:13px;color:var(--hanji-dim);word-break:break-all}

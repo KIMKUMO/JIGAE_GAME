@@ -1,6 +1,14 @@
 (function(){
 'use strict';
-const $ = id => document.getElementById(id);
+// Missing elements (e.g. an older cached index.html) must never stop the game loop.
+const _dummyEl=document.createElement('div');
+const $ = id => document.getElementById(id)||_dummyEl;
+function showError(title,detail){
+  const box=document.getElementById('errorBox');if(!box)return;
+  box.querySelector('b').textContent=title;box.querySelector('span').textContent=detail||'';box.hidden=false;
+}
+window.addEventListener('error',e=>showError('게임 실행 중 오류가 났어요','새로고침(Ctrl+Shift+R)해 보세요. 계속되면 이 문구를 알려주세요: '+(e.message||'')));
+if(!window.THREE){showError('3D 엔진을 불러오지 못했어요','인터넷 연결을 확인하고 새로고침(Ctrl+Shift+R)해 주세요.');return;}
 
 // ---------------------------------------------------------------- utils
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -56,10 +64,16 @@ function slopeAt(x,z){const e=0.6;return Math.hypot(groundH(x+e,z)-groundH(x-e,z
 
 // ---------------------------------------------------------------- renderer / scene
 const canvas=$('game');
-const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
-renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.75));
+let renderer;
+try{renderer=new THREE.WebGLRenderer({canvas,antialias:(window.devicePixelRatio||1)<1.5,powerPreference:'high-performance'});}
+catch(err){showError('이 브라우저에서 3D 그래픽(WebGL)을 켤 수 없어요','브라우저 설정에서 "하드웨어 가속 사용"을 켜고 다시 실행해 주세요. Chrome: 설정 → 시스템.');return;}
+let pixelRatio=Math.min(window.devicePixelRatio||1,1.5);
+renderer.setPixelRatio(pixelRatio);
+// if the graphics driver drops the context, let three.js rebuild it instead of staying black
+canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();showError('그래픽이 잠시 멈췄어요','자동으로 복구하는 중이에요. 계속 검은 화면이면 새로고침해 주세요.');},false);
+canvas.addEventListener('webglcontextrestored',()=>{const b=document.getElementById('errorBox');if(b)b.hidden=true;},false);
 renderer.setSize(innerWidth,innerHeight,false);
-renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;
 const scene=new THREE.Scene();
 const FOG=0xe6d3b0;
 scene.background=new THREE.Color(FOG);
@@ -68,8 +82,8 @@ const camera=new THREE.PerspectiveCamera(58,innerWidth/innerHeight,0.05,3200);
 
 scene.add(new THREE.HemisphereLight(0xd6e6ff,0x5d4a30,0.72));
 const sun=new THREE.DirectionalLight(0xffe7c4,0.9);
-sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
-const sc=sun.shadow.camera;sc.left=-34;sc.right=34;sc.top=34;sc.bottom=-34;sc.near=1;sc.far=260;
+sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);
+const sc=sun.shadow.camera;sc.left=-26;sc.right=26;sc.top=26;sc.bottom=-26;sc.near=1;sc.far=260;
 sun.shadow.bias=-0.0008;
 scene.add(sun);scene.add(sun.target);
 const SUN_OFF=new THREE.Vector3(-70,95,55);
@@ -85,7 +99,7 @@ const SUN_OFF=new THREE.Vector3(-70,95,55);
   sunDisc.position.copy(SUN_OFF).normalize().multiplyScalar(2300);sunDisc.lookAt(0,0,0);scene.add(sunDisc);
 }
 
-function lam(c,o){return new THREE.MeshLambertMaterial(Object.assign({color:c},o||{}));}
+function lam(c,o){const opts=Object.assign({color:c},o||{});delete opts.flatShading;return new THREE.MeshLambertMaterial(opts);} // r128 Lambert has no flatShading
 
 // terrain
 {
@@ -348,7 +362,7 @@ const k=c=>keys.has(c);
 const LOOK_SENS=0.0022;
 let locked=false;
 const isTouch=!!(window.matchMedia&&matchMedia('(pointer: coarse)').matches);
-function look(dx,dy){P.yaw-=dx*LOOK_SENS;P.pitch=clamp(P.pitch-dy*LOOK_SENS,-1.35,1.25);}
+function look(dx,dy){if(!isFinite(dx)||!isFinite(dy))return;dx=clamp(dx,-300,300);dy=clamp(dy,-300,300);P.yaw-=dx*LOOK_SENS;P.pitch=clamp(P.pitch-dy*LOOK_SENS,-1.35,1.25);}
 function requestLook(){
   if(game!=='play'||isTouch||!canvas.requestPointerLock)return;
   try{const pr=canvas.requestPointerLock();if(pr&&pr.catch)pr.catch(()=>{});}catch(e){}
@@ -663,11 +677,23 @@ function updateAudio(){
 function resize(){renderer.setSize(innerWidth,innerHeight,false);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();}
 addEventListener('resize',resize);
 let last=performance.now();
+let slowFrames=0,frameCount=0,reportedLoopError=false;
 function frame(now){
-  const dt=Math.min(0.05,(now-last)/1000);last=now;
-  update(dt);updateHUD();updateAudio();
+  requestAnimationFrame(frame);                       // schedule first so one bad frame can't freeze the game
+  const raw=(now-last)/1000,dt=Math.min(0.05,raw);last=now;
+  try{update(dt);updateHUD();updateAudio();}
+  catch(err){if(!reportedLoopError){reportedLoopError=true;console.error(err);showError('게임 실행 중 오류가 났어요','새로고침(Ctrl+Shift+R)해 보세요. 계속되면 이 문구를 알려주세요: '+err.message);}}
+  if(!isFinite(camera.position.x)||!isFinite(camera.position.y)||!isFinite(camera.position.z)){P.pitch=0;if(!isFinite(P.yaw))P.yaw=0;camera.position.set(P.x,P.y+1.7,P.z);}
   renderer.render(scene,camera);
-  requestAnimationFrame(frame);
+  // drop resolution, then shadows, if the machine can't keep up
+  frameCount++;if(raw>0.045&&raw<1)slowFrames++;
+  if(frameCount%120===0){
+    if(slowFrames>70){
+      if(pixelRatio>0.75){pixelRatio=Math.max(0.75,pixelRatio-0.25);renderer.setPixelRatio(pixelRatio);resize();}
+      else if(renderer.shadowMap.enabled){renderer.shadowMap.enabled=false;sun.castShadow=false;scene.traverse(o=>{if(o.material)o.material.needsUpdate=true;});}
+    }
+    slowFrames=0;
+  }
 }
 document.body.classList.add('title');
 reset();

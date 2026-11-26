@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans+KR:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20261126b">
 </head>
 <body>
 
@@ -43,6 +43,7 @@
 </div>
 
 <div class="hud" id="toast"></div>
+<div id="errorBox" role="alert" hidden><b></b><span></span></div>
 <div class="hud panel" id="lookHint" hidden>화면을 클릭하면 마우스로 둘러볼 수 있어요 · <kbd>Esc</kbd> 풀기</div>
 <div class="hud panel" id="prompt" hidden><kbd>F</kbd> 또는 <kbd>Space</kbd> 라디오 줍기</div>
 <div class="hud" id="marker" hidden>라디오 0 m</div>
@@ -91,6 +92,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="game.js"></script>
+<script>if(!window.THREE)document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"><\/script>');</script>
+<script src="game.js?v=20261126b"></script>
 </body>
 </html>
