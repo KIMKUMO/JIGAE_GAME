@@ -67,7 +67,7 @@ function canyonCut(x,z,h){
 }
 // a creek running down to the canyon, where it drops as a waterfall (폭포)
 const CREEK_Z0=canyonZ(FALL_X)+12,CREEK_Z1=Math.min(cliffZ(FALL_X)-30,canyonZ(FALL_X)+250);
-function creekX(z){return FALL_X+7*Math.sin(z/38);}
+function creekX(z){return FALL_X+7*Math.sin(z/38)*smoothstep(CREEK_Z0,CREEK_Z0+35,z);}   // straight where it reaches the lip
 function creekCut(x,z,h){if(z<CREEK_Z0||z>CREEK_Z1)return h;const d=Math.abs(x-creekX(z));if(d>6)return h;return h-1.6*(1-smoothstep(1.8,5,d));}
 
 // ---------------------------------------------------------------- special patches (구간)
@@ -263,6 +263,8 @@ function instMesh(geo,mat,list,fn,shadow){const m=new THREE.InstancedMesh(geo,ma
 instMesh(new THREE.BoxGeometry(1,1,1),lam(0xffffff),STEPS,(st,d,c)=>{const k=STEPS.indexOf(st);d.position.set(st.x,st.top-0.475,st.z);d.rotation.set(0,Math.atan2(st.dx,st.dz)+(hash2(k,3)-0.5)*0.08,0);d.scale.set(2.3+hash2(k,5)*0.3,0.95,TREAD+0.05);const v=0.5+hash2(k,9)*0.12;c.setRGB(v+0.02,v,v-0.04);});
 
 // water: the river on the canyon floor, the creek, and the waterfall
+// where the north canyon wall meets the slope above it (the lip the creek spills over)
+function northRimZ(x){const zc=canyonZ(x);let z=zc+CAN.floorHW+1;for(;z<zc+60;z+=0.5)if(slopeAt(x,z+0.6)<1.1&&slopeAt(x,z+1.6)<1.1)break;return z;}
 const waterMat=new THREE.MeshLambertMaterial({color:0x5a95b8,transparent:true,opacity:0.86});
 function ribbon(points,width,mat){ // points: [{x,y,z,tx,tz}]
   const pos=[],idx=[];points.forEach((p,i)=>{const nx=-p.tz,nz=p.tx;pos.push(p.x+nx*width,p.y,p.z+nz*width,p.x-nx*width,p.y,p.z-nz*width);if(i>0){const a=(i-1)*2;idx.push(a,a+2,a+1,a+1,a+2,a+3);}});
@@ -271,25 +273,51 @@ function ribbon(points,width,mat){ // points: [{x,y,z,tx,tz}]
 {
   const pts=[];for(let x=X0;x<=X1;x+=4){const z=canyonZ(x),z2=canyonZ(x+1),l=Math.hypot(1,z2-z);pts.push({x,y:canyonFloor(x)+0.45,z,tx:1/l,tz:(z2-z)/l});}
   const river=ribbon(pts,CAN.floorHW-0.4,waterMat);river.material.side=THREE.DoubleSide;
-  const cp=[];for(let z=CREEK_Z0-4;z<=CREEK_Z1;z+=3){const x=creekX(z),x2=creekX(z+1),l=Math.hypot(x2-x,1);cp.push({x,y:groundH(x,z)+0.25,z,tx:(x2-x)/l,tz:1/l});}
+  const cp=[];for(let z=northRimZ(FALL_X)+0.5;z<=CREEK_Z1;z+=3){const x=creekX(z),x2=creekX(z+1),l=Math.hypot(x2-x,1);cp.push({x,y:groundH(x,z)+0.25,z,tx:(x2-x)/l,tz:1/l});}
   ribbon(cp,1.5,waterMat).material.side=THREE.DoubleSide;
   // stepping stones across the ford
   const stones=[];const fz=canyonZ(FORD_X);for(let k=-4;k<=4;k++){const z=fz+k*1.15,x=FORD_X+(hash2(k,7)-0.5)*1.2;stones.push({x,z,y:canyonFloor(FORD_X)+0.5});}
   instMesh(new THREE.CylinderGeometry(0.55,0.65,0.5,7),lam(0x8d877b),stones,(s,d,c)=>{d.position.set(s.x,s.y,s.z);d.rotation.set(0,s.x,0);d.scale.setScalar(1);c.setHex(0x8d877b);});
 }
-let fallTex=null;const WF={};
+let fallTex=null,fallTex2=null;const WF={};
+function softTex(inner,outer){const cv=document.createElement('canvas');cv.width=cv.height=128;const g=cv.getContext('2d');const gr=g.createRadialGradient(64,64,4,64,64,62);gr.addColorStop(0,inner);gr.addColorStop(1,outer);g.fillStyle=gr;g.fillRect(0,0,128,128);return new THREE.CanvasTexture(cv);}
 {
-  const zc=canyonZ(FALL_X);WF.x=FALL_X;WF.zTop=CREEK_Z0+1;WF.yTop=groundH(FALL_X,WF.zTop)+0.3;WF.zBot=zc+CAN.floorHW;WF.yBot=canyonFloor(FALL_X)+0.3;
-  const cv=document.createElement('canvas');cv.width=64;cv.height=256;const g=cv.getContext('2d');
-  g.fillStyle='#cfe6f2';g.fillRect(0,0,64,256);for(let i=0;i<40;i++){g.fillStyle='rgba(255,255,255,'+(0.3+Math.random()*0.6)+')';g.fillRect(Math.random()*64,Math.random()*256,2+Math.random()*4,20+Math.random()*60);}
-  fallTex=new THREE.CanvasTexture(cv);fallTex.wrapS=fallTex.wrapT=THREE.RepeatWrapping;fallTex.repeat.set(2,3);
-  const geo=new THREE.PlaneGeometry(7,1,1,1);
-  const fall=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({map:fallTex,transparent:true,opacity:0.9,side:THREE.DoubleSide}));
-  const len=Math.hypot(WF.yTop-WF.yBot,WF.zTop-WF.zBot);
-  fall.scale.y=len;fall.position.set(FALL_X,(WF.yTop+WF.yBot)/2,(WF.zTop+WF.zBot)/2-0.6);
-  fall.rotation.x=-Math.atan2(WF.zTop-WF.zBot,WF.yTop-WF.yBot);scene.add(fall);
-  WF.mist=[];for(let k=0;k<7;k++){const m=new THREE.Mesh(new THREE.SphereGeometry(1.6,10,8),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.32,depthWrite:false}));
-    m.position.set(FALL_X+(k-3)*1.3,WF.yBot+0.8,WF.zBot-1.5-hash2(k,1)*2);scene.add(m);WF.mist.push(m);}
+  const zc=canyonZ(FALL_X),rimZ=northRimZ(FALL_X),zLip=rimZ+2.5,zBot=zc+CAN.floorHW-0.8,floorY=canyonFloor(FALL_X)+0.45;
+  WF.x=FALL_X;WF.zTop=zLip;WF.yTop=groundH(FALL_X,zLip);WF.zBot=zBot;WF.yBot=floorY;
+  // streaky falling-water texture (transparent between the streaks so the sheet looks layered)
+  const cv=document.createElement('canvas');cv.width=128;cv.height=256;const g=cv.getContext('2d');
+  g.fillStyle='rgba(185,222,240,0.55)';g.fillRect(0,0,128,256);
+  for(let i=0;i<90;i++){const x=Math.random()*128,w=1+Math.random()*4,y=Math.random()*256,h=30+Math.random()*120,al=0.35+Math.random()*0.6;
+    const gr=g.createLinearGradient(0,y,0,y+h);gr.addColorStop(0,'rgba(255,255,255,0)');gr.addColorStop(0.5,'rgba(255,255,255,'+al+')');gr.addColorStop(1,'rgba(255,255,255,0)');g.fillStyle=gr;g.fillRect(x,y,w,h);g.fillRect(x,y-256,w,h);}
+  fallTex=new THREE.CanvasTexture(cv);fallTex.wrapS=fallTex.wrapT=THREE.RepeatWrapping;
+  fallTex2=fallTex.clone();fallTex2.needsUpdate=true;fallTex2.wrapS=fallTex2.wrapT=THREE.RepeatWrapping;fallTex2.repeat.set(1.6,1);
+  // rows from the lip down the rock face to the river; the sheet bows a little away from the wall
+  function sheet(lift,widthScale,tex,opacity){
+    const N=30,C=6,pos=[],uv=[],idx=[];let acc=0,px=0,py=0,pz=0;
+    for(let r=0;r<=N;r++){
+      const t=r/N,z=lerp(zLip,zBot,t),bow=Math.sin(Math.PI*Math.min(1,t*1.15))*0.9*(1-t*0.3);
+      const half=lerp(1.5,3.4,Math.pow(t,0.8))*widthScale;
+      let yc=Math.max(groundH(FALL_X,z),floorY)+lift+bow*0.5;if(r===N)yc=floorY+0.05;
+      const zz=z-bow*1.1-lift;
+      if(r>0)acc+=Math.hypot(yc-py,zz-pz);px=FALL_X;py=yc;pz=zz;
+      for(let c=0;c<=C;c++){const u=c/C,x=FALL_X+(u-0.5)*2*half;pos.push(x,Math.max(yc,groundH(x,z)+lift),zz);uv.push(u,acc/6);}
+      if(r>0)for(let c=0;c<C;c++){const a0=(r-1)*(C+1)+c,b0=r*(C+1)+c;idx.push(a0,b0,a0+1,a0+1,b0,b0+1);}
+    }
+    const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geo.setIndex(idx);
+    const m=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({map:tex,transparent:true,opacity,side:THREE.DoubleSide,depthWrite:false}));scene.add(m);return m;
+  }
+  sheet(0.35,1.0,fallTex,0.95);
+  sheet(0.75,0.85,fallTex2,0.6);
+  // white water where the creek tips over the lip
+  const lip=new THREE.Mesh(new THREE.PlaneGeometry(3.4,2.2),new THREE.MeshBasicMaterial({map:softTex('rgba(255,255,255,0.95)','rgba(255,255,255,0)'),transparent:true,depthWrite:false}));
+  lip.rotation.x=-Math.PI/2;lip.position.set(FALL_X,WF.yTop+0.35,zLip+0.6);scene.add(lip);
+  // foam pool on the river
+  const foam=new THREE.Mesh(new THREE.CircleGeometry(5.5,24),new THREE.MeshBasicMaterial({map:softTex('rgba(255,255,255,0.9)','rgba(255,255,255,0)'),transparent:true,depthWrite:false}));
+  foam.rotation.x=-Math.PI/2;foam.position.set(FALL_X,floorY+0.08,zBot-1.2);scene.add(foam);WF.foam=foam;
+  // soft drifting spray
+  const mistTex=softTex('rgba(255,255,255,0.55)','rgba(255,255,255,0)');
+  WF.mist=[];for(let k=0;k<8;k++){const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:mistTex,transparent:true,opacity:0.5,depthWrite:false}));
+    sp.userData.base=5+hash2(k,4)*4;sp.userData.y=floorY+1.2+hash2(k,6)*2.5;sp.position.set(FALL_X+(hash2(k,2)-0.5)*7,sp.userData.y,zBot-1-hash2(k,1)*3.5);sp.scale.setScalar(sp.userData.base);scene.add(sp);WF.mist.push(sp);}
 }
 
 // the rope bridge: hangs from a pivot above the deck so it can swing sideways
@@ -840,8 +868,8 @@ function update(dt){
   // fog in the misty maple forest
   {const target=(playing&&zt===Z_FOG)?zw:0;fogMix=lerp(fogMix,target,1-Math.exp(-dt*1.5));
    scene.fog.near=lerp(220,3,fogMix);scene.fog.far=lerp(1700,38,fogMix);scene.fog.color.setHex(FOG).lerp(_fogC.setHex(FOG_MIST),fogMix);scene.background.copy(scene.fog.color);}
-  if(fallTex)fallTex.offset.y-=dt*1.6;
-  for(let i=0;i<WF.mist.length;i++){const m=WF.mist[i],s=1+0.25*Math.sin(clock*2+i);m.scale.setScalar(s);}
+  if(fallTex){fallTex.offset.y-=dt*0.9;fallTex2.offset.y-=dt*1.35;}
+  for(let i=0;i<WF.mist.length;i++){const m=WF.mist[i],s=1+0.18*Math.sin(clock*1.3+i*1.7);m.scale.setScalar(m.userData.base*s);m.position.y=m.userData.y+Math.sin(clock*0.8+i)*0.6;m.material.opacity=0.4+0.15*Math.sin(clock*1.1+i*2.3);}
 
   // rig pose
   player.position.set(P.x,P.y,P.z);player.rotation.y=P.yaw;
