@@ -23,8 +23,10 @@ const lerp=(a,b,t)=>a+(b-a)*t;
 function smoothstep(a,b,x){const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);}
 
 // ---------------------------------------------------------------- world constants
-// No trail and no cliffs: one big autumn mountain you can climb from any side, by any line.
-// Straight up is short but steep (the radio tips back); zig-zagging is longer but gentler.
+// No trail: the mountain can be climbed from any side. It is split into patches (구간),
+// each with its own character, so any line up crosses several of them:
+//   억새 능선 (gentle grass), 울퉁불퉁 너덜지대 (uneven rubble), 가파른 비탈 (steep),
+//   구불구불 돌계단 (winding stone stairs), 단풍 숲 (dense maple forest).
 const HALF=420, SEG=420, CELL=2*HALF/SEG, VN=SEG+1;
 const H=150, SIG=175;
 const START_R=335, THETA0=Math.PI*0.25;
@@ -37,27 +39,111 @@ function roughAt(x,z){const r=Math.hypot(x,z),foot=lerp(1,0.35,smoothstep(220,33
 function ridgesAt(x,z,r){
   const th=Math.atan2(z,x),w=fbm(x/90,z/90)*1.4;
   const amp=10*smoothstep(30,120,r)*(1-smoothstep(250,360,r));
-  return (0.35-Math.abs(Math.sin(2.5*th+w)))*amp;   // soft spurs and hollows, all walkable
-}
-function baseHeight(x,z){
-  const r=Math.hypot(x,z);
-  let h=mtnBase(r)+ridgesAt(x,z,r)+roughAt(x,z);
-  h=lerp(H,h,smoothstep(10,24,r));
-  h*=1-smoothstep(370,415,r);
-  return h;
+  return (0.35-Math.abs(Math.sin(2.5*th+w)))*amp;   // soft spurs and hollows
 }
 const SUMMIT_H=H;
 const ALT0=420, ALT_SCALE=(980-420)/SUMMIT_H;
 
+// ---------------------------------------------------------------- zones (구간)
+const ZONES=[
+  {key:'meadow', name:'억새 능선',        desc:'완만한 풀밭이에요'},
+  {key:'rough',  name:'울퉁불퉁 너덜지대', desc:'발밑이 고르지 않아 덜컹거려요'},
+  {key:'steep',  name:'가파른 비탈',       desc:'숙이지 않으면 뒤로 넘어가요'},
+  {key:'stairs', name:'구불구불 돌계단',   desc:'계단마다 라디오가 들썩여요'},
+  {key:'forest', name:'단풍 숲',          desc:'나무 사이로 길을 골라요'},
+];
+const Z_MEADOW=0,Z_ROUGH=1,Z_STEEP=2,Z_STAIRS=3,Z_FOREST=4;
+// patch centres sit on rings around the peak; neighbouring patches (sideways and up/down) differ
+const SEEDS=[];
+[[300,8,0],[225,7,0.5],[150,6,0.15],[85,4,0.6]].forEach(([r,n,off],ri)=>{
+  for(let j=0;j<n;j++){const a=THETA0+(j+off)/n*Math.PI*2;SEEDS.push({x:Math.cos(a)*r,z:Math.sin(a)*r,r,a,type:(j+ri*2)%5});}
+});
+const ZBLEND=16;
+const _zi={i:0,w:0,type:0};
+function zoneInfo(x,z,out){
+  let d1=1e9,d2=1e9,i1=0;
+  for(let i=0;i<SEEDS.length;i++){const s=SEEDS[i],d=Math.hypot(x-s.x,z-s.z);if(d<d1){d2=d1;d1=d;i1=i;}else if(d<d2)d2=d;}
+  const r=Math.hypot(x,z);
+  out.i=i1;out.type=SEEDS[i1].type;
+  out.w=smoothstep(0,ZBLEND,d2-d1)*smoothstep(32,52,r)*(1-smoothstep(355,380,r));   // 1 inside a patch, 0 at its edges
+  return out;
+}
+function zonedHeight(x,z){
+  const r=Math.hypot(x,z),zi=zoneInfo(x,z,_zi),w=zi.w,s=SEEDS[zi.i];
+  const h0=mtnBase(r)+ridgesAt(x,z,r),rough=roughAt(x,z);
+  let h;
+  if(zi.type===Z_MEADOW)h=h0+rough*lerp(1,0.25,w);                                   // smooth, rolling
+  else if(zi.type===Z_ROUGH)h=h0+rough+w*(fbm(x/6,z/6)*3.6+(vnoise(x/4.1,z/4.1)-0.5)*1.8); // lumpy rubble
+  else if(zi.type===Z_STEEP){                                                          // the climb is squeezed into a steep wall
+    const lo=mtnBase(s.r+48),hi=mtnBase(Math.max(0,s.r-48)),t=clamp((h0-lo)/Math.max(1e-3,hi-lo),0,1),k=3.6;
+    const tt=0.5+0.5*Math.tanh((t-0.5)*k)/Math.tanh(k/2);
+    h=lerp(h0,lo+(hi-lo)*tt,w)+rough;
+  }else h=h0+rough;
+  h=lerp(H,h,smoothstep(10,24,r));
+  h*=1-smoothstep(370,415,r);
+  return h;
+}
+
 // ---------------------------------------------------------------- heightfield
-const HF=new Float32Array(VN*VN);
-for(let iz=0;iz<VN;iz++)for(let ix=0;ix<VN;ix++)HF[iz*VN+ix]=baseHeight(-HALF+ix*CELL,-HALF+iz*CELL);
+const HF=new Float32Array(VN*VN),ZT=new Uint8Array(VN*VN),ZW=new Float32Array(VN*VN);
+for(let iz=0;iz<VN;iz++)for(let ix=0;ix<VN;ix++){
+  const x=-HALF+ix*CELL,z=-HALF+iz*CELL,i=iz*VN+ix;
+  HF[i]=zonedHeight(x,z);zoneInfo(x,z,_zi);ZT[i]=_zi.type;ZW[i]=_zi.w;
+}
 function groundH(x,z){
   const fx=(x+HALF)/CELL,fz=(z+HALF)/CELL;
   if(fx<0||fz<0||fx>=SEG||fz>=SEG)return 0;
   const ix=Math.floor(fx),iz=Math.floor(fz),tx=fx-ix,tz=fz-iz,i=iz*VN+ix;
   return lerp(lerp(HF[i],HF[i+1],tx),lerp(HF[i+VN],HF[i+VN+1],tx),tz);
 }
+
+// ---------------------------------------------------------------- winding stone stairs
+// In every stairs patch a staircase snakes from the patch's lower edge to its upper edge.
+const TREAD=0.62;
+const STEPS=[];           // {x,z,top,dx,dz}
+const STAIR_STARTS=[];
+{
+  for(const s of SEEDS){
+    if(s.type!==Z_STAIRS)continue;
+    const rOut=s.r+40,rIn=Math.max(30,s.r-40),pts=[];
+    for(let k=0;k<=600;k++){const u=k/600,r=lerp(rOut,rIn,u),lat=9*Math.sin(u*Math.PI*3.5)+3*Math.sin(u*Math.PI*9),a=s.a+lat/r;pts.push([Math.cos(a)*r,Math.sin(a)*r]);}
+    let acc=0,next=0;const first=STEPS.length;
+    for(let k=1;k<pts.length;k++){
+      const [x0,z0]=pts[k-1],[x1,z1]=pts[k],seg=Math.hypot(x1-x0,z1-z0);
+      while(acc+seg>=next){const t=(next-acc)/seg,x=lerp(x0,x1,t),z=lerp(z0,z1,t);STEPS.push({x,z,top:0,dx:(x1-x0)/seg,dz:(z1-z0)/seg});next+=TREAD;}
+      acc+=seg;
+    }
+    // heights: smoothed terrain along the stairs, never stepping down on the way up
+    const last=STEPS.length;
+    for(let k=first;k<last;k++){let sum=0,n=0;for(let j=Math.max(first,k-4);j<=Math.min(last-1,k+4);j++){sum+=groundH(STEPS[j].x,STEPS[j].z);n++;}STEPS[k].top=sum/n+0.12;}
+    for(let k=first+1;k<last;k++)STEPS[k].top=Math.max(STEPS[k].top,STEPS[k-1].top);
+    STAIR_STARTS.push(first);
+  }
+  // bed the terrain under the stairs
+  for(const st of STEPS){
+    const ix0=Math.floor((st.x+HALF)/CELL),iz0=Math.floor((st.z+HALF)/CELL);
+    for(let iz=iz0-2;iz<=iz0+3;iz++)for(let ix=ix0-2;ix<=ix0+3;ix++){
+      if(ix<0||iz<0||ix>SEG||iz>SEG)continue;
+      const x=-HALF+ix*CELL,z=-HALF+iz*CELL,d=Math.hypot(x-st.x,z-st.z),w=1-smoothstep(1.4,3.2,d);
+      if(w>0){const i=iz*VN+ix;HF[i]=lerp(HF[i],st.top-0.42,w);}   // steps stand ~40cm proud of the slope
+    }
+  }
+}
+const SBC=6,SBN=Math.ceil(2*HALF/SBC),stepGrid=Array.from({length:SBN*SBN},()=>[]);
+STEPS.forEach((st,k)=>{const bx=clamp(Math.floor((st.x+HALF)/SBC),0,SBN-1),bz=clamp(Math.floor((st.z+HALF)/SBC),0,SBN-1);stepGrid[bz*SBN+bx].push(k);});
+// index of the stair step under (x,z), or -1
+function stepAt(x,z){
+  if(!(isFinite(x)&&isFinite(z)))return -1;
+  const bx=Math.floor((x+HALF)/SBC),bz=Math.floor((z+HALF)/SBC);let best=-1,bd=1e9;
+  for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const cx=bx+dx,cz=bz+dz;if(cx<0||cz<0||cx>=SBN||cz>=SBN)continue;
+    for(const k of stepGrid[cz*SBN+cx]){const st=STEPS[k],ox=x-st.x,oz=z-st.z,al=Math.abs(ox*st.dx+oz*st.dz),lat=Math.abs(-ox*st.dz+oz*st.dx);
+      if(al<TREAD*0.55&&lat<1.25){const d=al+lat*0.1;if(d<bd){bd=d;best=k;}}}}
+  return best;
+}
+// walking surface: the ground, or the top of a stair step
+function surfaceH(x,z){const g=groundH(x,z),k=stepAt(x,z);return k>=0?Math.max(g,STEPS[k].top):g;}
+function zoneAt(x,z){if(!(isFinite(x)&&isFinite(z)))return _zi;return zoneInfo(x,z,_zi);}
+
 const _n=new THREE.Vector3();
 function groundN(x,z,out){const e=0.5;out.set(groundH(x-e,z)-groundH(x+e,z),2*e,groundH(x,z-e)-groundH(x,z+e)).normalize();return out;}
 function slopeAt(x,z){const e=0.6;return Math.hypot(groundH(x+e,z)-groundH(x-e,z),groundH(x,z+e)-groundH(x,z-e))/(2*e);}
@@ -101,24 +187,38 @@ const SUN_OFF=new THREE.Vector3(-70,95,55);
 
 function lam(c,o){const opts=Object.assign({color:c},o||{});delete opts.flatShading;return new THREE.MeshLambertMaterial(opts);} // r128 Lambert has no flatShading
 
-// terrain
+// terrain: each patch gets its own ground colour
 {
   const g=new THREE.PlaneGeometry(2*HALF,2*HALF,SEG,SEG);g.rotateX(-Math.PI/2);
   const pos=g.attributes.position,cols=new Float32Array(pos.count*3);
   const cG1=new THREE.Color(0x667f3b),cG2=new THREE.Color(0x9a8a45),cG3=new THREE.Color(0x7d6a3a),cRock=new THREE.Color(0x8a8070),c=new THREE.Color();
+  const tint=[new THREE.Color(0xc4ad68),new THREE.Color(0x6f695f),new THREE.Color(0x7c6f58),new THREE.Color(0x7d7a48),new THREE.Color(0x7a4a2a)];
+  const tintAmt=[0.55,0.85,0.35,0.15,0.5];
+  const cScree=new THREE.Color(0x9a9286);
   for(let iz=0;iz<VN;iz++)for(let ix=0;ix<VN;ix++){
     const i=iz*VN+ix,x=-HALF+ix*CELL,z=-HALF+iz*CELL;pos.setY(i,HF[i]);
     const hx=HF[iz*VN+Math.min(ix+1,SEG)]-HF[iz*VN+Math.max(ix-1,0)],hz=HF[Math.min(iz+1,SEG)*VN+ix]-HF[Math.max(iz-1,0)*VN+ix];
     const slope=Math.hypot(hx,hz)/(2*CELL);
     const n1=vnoise(x/14,z/14),n2=vnoise(x/5+40,z/5+40);
     c.copy(cG1).lerp(cG2,n1).lerp(cG3,n2*0.45);
-    c.lerp(cRock,smoothstep(0.55,0.9,slope)*0.75);
+    c.lerp(tint[ZT[i]],ZW[i]*tintAmt[ZT[i]]*(0.75+0.5*n2));
+    if(ZT[i]===Z_ROUGH)c.lerp(cScree,ZW[i]*hash2(ix,iz)*0.55);   // speckled scree
+    c.lerp(cRock,smoothstep(0.55,0.95,slope)*0.75);
     c.lerp(cRock,smoothstep(SUMMIT_H*0.72,SUMMIT_H*0.95,HF[i])*0.45);
     cols[i*3]=c.r;cols[i*3+1]=c.g;cols[i*3+2]=c.b;
   }
   g.setAttribute('color',new THREE.BufferAttribute(cols,3));g.computeVertexNormals();
   const terrain=new THREE.Mesh(g,lam(0xffffff,{vertexColors:true}));terrain.receiveShadow=true;scene.add(terrain);
   const ring=new THREE.Mesh(new THREE.RingGeometry(HALF*1.414,4000,64,1),lam(0x6c7a3c));ring.rotation.x=-Math.PI/2;scene.add(ring);
+}
+
+// stone steps
+{
+  const m=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),lam(0xffffff),Math.max(1,STEPS.length));m.count=STEPS.length;m.castShadow=true;m.receiveShadow=true;
+  const d=new THREE.Object3D(),c=new THREE.Color();
+  STEPS.forEach((st,k)=>{const hgt=0.95;d.position.set(st.x,st.top-hgt/2,st.z);d.rotation.set(0,Math.atan2(st.dx,st.dz)+(hash2(k,3)-0.5)*0.08,0);d.scale.set(2.3+hash2(k,5)*0.3,hgt,TREAD+0.05);d.updateMatrix();m.setMatrixAt(k,d.matrix);
+    const v=0.5+hash2(k,9)*0.12;c.setRGB(v+0.02,v,v-0.04);m.setColorAt(k,c);});
+  m.instanceMatrix.needsUpdate=true;if(m.instanceColor)m.instanceColor.needsUpdate=true;scene.add(m);
 }
 
 // trees and rocks (trunks and big boulders block you, but there is always room to walk around)
@@ -128,85 +228,120 @@ function addBlocker(x,z,r){const bx=clamp(Math.floor((x+HALF)/BLK),0,BLN-1),bz=c
 function nearBlocker(x,z,gap){const bx=Math.floor((x+HALF)/BLK),bz=Math.floor((z+HALF)/BLK);
   for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const cx=bx+dx,cz=bz+dz;if(cx<0||cz<0||cx>=BLN||cz>=BLN)continue;
     for(const o of blockGrid[cz*BLN+cx])if(Math.hypot(o.x-x,o.z-z)<o.r+gap)return true;}return false;}
+function nearStairs(x,z,d){const bx=Math.floor((x+HALF)/SBC),bz=Math.floor((z+HALF)/SBC);
+  for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const cx=bx+dx,cz=bz+dz;if(cx<0||cz<0||cx>=SBN||cz>=SBN)continue;
+    for(const k of stepGrid[cz*SBN+cx])if(Math.hypot(STEPS[k].x-x,STEPS[k].z-z)<d)return true;}return false;}
 {
-  const pines=[],leafy=[],rocks=[];
-  for(let k=0;k<22000&&(pines.length+leafy.length)<4800;k++){
+  const pines=[],leafy=[],rocks=[],grass=[];
+  const keep=[0.12,0.35,0.4,0.55,1.0];       // how many trees each kind of patch keeps
+  for(let k=0;k<40000&&(pines.length+leafy.length)<5200;k++){
     const a=rand()*Math.PI*2,r=16+Math.sqrt(rand())*380;const x=Math.cos(a)*r,z=Math.sin(a)*r;
     if(Math.hypot(x-START_X,z-START_Z)<8)continue;
-    if(vnoise(x/34+7,z/34+3)<0.3)continue; // clearings
-    if(nearBlocker(x,z,1.6))continue;      // keep a walkable gap between trunks
+    const zi=zoneInfo(x,z,_zi),forest=zi.type===Z_FOREST&&zi.w>0.3;
+    if(rand()>lerp(0.5,keep[zi.type],zi.w))continue;
+    if(!forest&&vnoise(x/34+7,z/34+3)<0.3)continue; // clearings
+    if(nearStairs(x,z,3.2))continue;
+    if(nearBlocker(x,z,forest?1.2:1.6))continue;      // keep a walkable gap between trunks
     const y=groundH(x,z);
     if(y>SUMMIT_H*0.8&&rand()<0.6)continue;
     const s=(0.75+rand()*0.75)*(y>SUMMIT_H*0.75?0.7:1);
-    (rand()<(y>SUMMIT_H*0.5?0.75:0.5)?pines:leafy).push({x,y,z,s,rot:rand()*6.28});
+    (forest?rand()<0.15:rand()<(y>SUMMIT_H*0.5?0.75:0.5))?pines.push({x,y,z,s,rot:rand()*6.28}):leafy.push({x,y,z,s,rot:rand()*6.28,maple:forest});
     addBlocker(x,z,0.22*s+0.08);
   }
-  for(let k=0;k<700;k++){const a=rand()*Math.PI*2,r=10+Math.sqrt(rand())*390,x=Math.cos(a)*r,z=Math.sin(a)*r;
-    if(Math.hypot(x-START_X,z-START_Z)<6)continue;
-    const s=0.4+rand()*1.6;if(s>1.3&&nearBlocker(x,z,s*0.6+1.6))continue;
+  for(let k=0;k<1400;k++){const a=rand()*Math.PI*2,r=10+Math.sqrt(rand())*390,x=Math.cos(a)*r,z=Math.sin(a)*r;
+    if(Math.hypot(x-START_X,z-START_Z)<6||nearStairs(x,z,2.5))continue;
+    const zi=zoneInfo(x,z,_zi),rubble=zi.type===Z_ROUGH&&zi.w>0.3;
+    if(!rubble&&rand()<0.55)continue;                 // rubble patches are full of boulders
+    const s=0.4+rand()*(rubble?1.9:1.6);if(s>1.3&&nearBlocker(x,z,s*0.6+1.6))continue;
     rocks.push({x,y:groundH(x,z),z,s,rot:rand()*6.28});if(s>1.3)addBlocker(x,z,s*0.55);}
+  // 억새: silver grass on the meadow ridges
+  for(let k=0;k<30000&&grass.length<9000;k++){const a=rand()*Math.PI*2,r=20+Math.sqrt(rand())*360,x=Math.cos(a)*r,z=Math.sin(a)*r;
+    const zi=zoneInfo(x,z,_zi);if(zi.type!==Z_MEADOW||rand()>zi.w)continue;
+    const n=4+Math.floor(rand()*4),s=0.8+rand()*0.6;   // a tuft of a few blades leaning outwards
+    for(let b=0;b<n;b++){const ang=rand()*6.28,ox=Math.cos(ang)*0.12,oz=Math.sin(ang)*0.12;grass.push({x:x+ox,y:groundH(x,z),z:z+oz,s:s*(0.8+rand()*0.4),rot:ang,lean:0.12+rand()*0.22});}}
   const trunkG=new THREE.CylinderGeometry(0.14,0.22,1,5);trunkG.translate(0,0.5,0);
   const pineLo=new THREE.ConeGeometry(1.5,2.6,7);pineLo.translate(0,2.3,0);
   const pineHi=new THREE.ConeGeometry(1.05,2.1,7);pineHi.translate(0,3.6,0);
   const leafG=new THREE.IcosahedronGeometry(1.55,0);leafG.translate(0,2.6,0);
   const rockG=new THREE.DodecahedronGeometry(0.6,0);
-  function inst(geo,mat,list,fn){const m=new THREE.InstancedMesh(geo,mat,Math.max(1,list.length));m.count=list.length;m.castShadow=true;m.receiveShadow=true;const c=new THREE.Color();
+  const grassG=new THREE.ConeGeometry(0.05,1.25,3);grassG.translate(0,0.62,0);
+  const plumeG=new THREE.ConeGeometry(0.045,0.45,4);plumeG.translate(0,1.42,0);
+  function inst(geo,mat,list,fn,shadow){const m=new THREE.InstancedMesh(geo,mat,Math.max(1,list.length));m.count=list.length;m.castShadow=shadow!==false;m.receiveShadow=true;const c=new THREE.Color();
     list.forEach((t,i)=>{fn(t,dummy,c);dummy.updateMatrix();m.setMatrixAt(i,dummy.matrix);m.setColorAt(i,c);});m.instanceMatrix.needsUpdate=true;if(m.instanceColor)m.instanceColor.needsUpdate=true;scene.add(m);return m;}
   const all=pines.concat(leafy);
   inst(trunkG,lam(0xffffff),all,(t,d,c)=>{d.position.set(t.x,t.y-0.1,t.z);d.rotation.set(0,t.rot,0);d.scale.set(t.s,t.s*1.9,t.s);c.setHex(0x5e4026);});
   const pinePal=[0x2f5a37,0x3a6a3c,0x2a4d33,0x46703f];
-  inst(pineLo,lam(0xffffff,{flatShading:true}),pines,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(0,t.rot,0);d.scale.setScalar(t.s);c.setHex(pinePal[(t.rot*10|0)%4]);});
-  inst(pineHi,lam(0xffffff,{flatShading:true}),pines,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(0,t.rot,0);d.scale.setScalar(t.s);c.setHex(pinePal[(t.rot*10+1|0)%4]);});
-  const autumn=[0xc8452b,0xe07a2e,0xe8b43a,0xb5392a,0xd8962f,0x9a8a3c];
-  inst(leafG,lam(0xffffff,{flatShading:true}),leafy,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(t.rot,t.rot*2,0);d.scale.set(t.s,t.s*1.1,t.s);c.setHex(autumn[(t.rot*13|0)%autumn.length]);});
-  inst(rockG,lam(0xffffff,{flatShading:true}),rocks,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(t.rot,t.rot*1.7,t.rot*.5);d.scale.set(t.s,t.s*0.7,t.s*1.1);c.setRGB(0.5+Math.min(t.s,2)*0.04,0.48+Math.min(t.s,2)*0.03,0.44);});
+  inst(pineLo,lam(0xffffff),pines,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(0,t.rot,0);d.scale.setScalar(t.s);c.setHex(pinePal[(t.rot*10|0)%4]);});
+  inst(pineHi,lam(0xffffff),pines,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(0,t.rot,0);d.scale.setScalar(t.s);c.setHex(pinePal[(t.rot*10+1|0)%4]);});
+  const autumn=[0xc8452b,0xe07a2e,0xe8b43a,0xb5392a,0xd8962f,0x9a8a3c],maple=[0xd2361f,0xe0521e,0xb8281c,0xe8862a];
+  inst(leafG,lam(0xffffff),leafy,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(t.rot,t.rot*2,0);d.scale.set(t.s,t.s*1.1,t.s);c.setHex(t.maple?maple[(t.rot*13|0)%4]:autumn[(t.rot*13|0)%autumn.length]);});
+  inst(rockG,lam(0xffffff),rocks,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(t.rot,t.rot*1.7,t.rot*.5);d.scale.set(t.s,t.s*0.7,t.s*1.1);c.setRGB(0.5+Math.min(t.s,2)*0.04,0.48+Math.min(t.s,2)*0.03,0.44);});
+  const grassPose=(t,d)=>{d.position.set(t.x,t.y-0.05,t.z);d.rotation.set(0,t.rot,0);d.rotateZ(t.lean);d.scale.setScalar(t.s);};
+  inst(grassG,lam(0xffffff),grass,(t,d,c)=>{grassPose(t,d);c.setRGB(0.72,0.66,0.44);},false);
+  inst(plumeG,lam(0xffffff),grass,(t,d,c)=>{grassPose(t,d);c.setRGB(0.93,0.9,0.82);},false);
 }
 
 // far ridges
 {
   const g=new THREE.ConeGeometry(1,1,6);
-  const m=new THREE.InstancedMesh(g,lam(0x7f8c98,{flatShading:true}),40);
+  const m=new THREE.InstancedMesh(g,lam(0x7f8c98),40);
   for(let i=0;i<40;i++){const a=i/40*Math.PI*2+rand()*0.12,r=950+rand()*400,s=150+rand()*220;dummy.position.set(Math.cos(a)*r,s*0.38-10,Math.sin(a)*r);dummy.rotation.set(0,rand()*3,0);dummy.scale.set(s*1.3,s*0.8,s*1.2);dummy.updateMatrix();m.setMatrixAt(i,dummy.matrix);}
   scene.add(m);
 }
 
-// small stones scattered all over the slopes: stepping on one jolts the radio
+// small stones: a few everywhere, lots in the rubble patches. Stepping on one jolts the radio.
 const bumps=[],roots=[];
+const BMC=6,BMN=Math.ceil(2*HALF/BMC),bumpGrid=Array.from({length:BMN*BMN},()=>[]);
 {
-  for(let k=0;k<2600;k++){const a=rand()*Math.PI*2,r=12+Math.sqrt(rand())*370,x=Math.cos(a)*r,z=Math.sin(a)*r;bumps.push({x,z,y:groundH(x,z),s:0.22+rand()*0.16,cd:0});}
-  const m=new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1,0),lam(0x8c8577,{flatShading:true}),bumps.length);m.castShadow=true;m.receiveShadow=true;
+  for(let k=0;k<30000&&bumps.length<9000;k++){const a=rand()*Math.PI*2,r=12+Math.sqrt(rand())*370,x=Math.cos(a)*r,z=Math.sin(a)*r;
+    const zi=zoneInfo(x,z,_zi),p=zi.type===Z_ROUGH?lerp(0.08,1,zi.w):zi.type===Z_MEADOW?0.03:0.08;
+    if(rand()>p||nearStairs(x,z,1.6))continue;
+    const b={x,z,y:groundH(x,z),s:0.22+rand()*0.18,cd:0};bumps.push(b);
+    bumpGrid[clamp(Math.floor((z+HALF)/BMC),0,BMN-1)*BMN+clamp(Math.floor((x+HALF)/BMC),0,BMN-1)].push(b);}
+  const m=new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1,0),lam(0x8c8577),bumps.length);m.castShadow=true;m.receiveShadow=true;
   bumps.forEach((b,k)=>{dummy.position.set(b.x,b.y+0.02,b.z);dummy.rotation.set(k,k*2.3,k*.7);dummy.scale.set(b.s*1.2,b.s*0.6,b.s);dummy.updateMatrix();m.setMatrixAt(k,dummy.matrix);});
   scene.add(m);
 }
+function bumpsNear(x,z){
+  const bx=Math.floor((x+HALF)/BMC),bz=Math.floor((z+HALF)/BMC),out=[];
+  for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){const cx=bx+dx,cz=bz+dz;if(cx<0||cz<0||cx>=BMN||cz>=BMN)continue;for(const b of bumpGrid[cz*BMN+cx])out.push(b);}
+  return out;
+}
 
-// signpost at the foot of the mountain
+// signposts: one at the start, one where each foot-of-the-mountain patch begins, one at each staircase
 const signs=[];
 function makeSign(l1,l2,x,z,faceYaw){
   const cv=document.createElement('canvas');cv.width=512;cv.height=256;
   const tex=new THREE.CanvasTexture(cv);
+  const fit=(g,text,size,weight,family,maxW)=>{let fs=size;do{g.font=weight+' '+fs+'px '+family;fs-=2;}while(g.measureText(text).width>maxW&&fs>18);};
   const draw=()=>{const g=cv.getContext('2d');g.fillStyle='#6e4626';g.fillRect(0,0,512,256);
     g.strokeStyle='rgba(0,0,0,.18)';g.lineWidth=3;for(let y=18;y<256;y+=22){g.beginPath();g.moveTo(0,y+Math.sin(y)*4);g.bezierCurveTo(170,y-6,340,y+8,512,y);g.stroke();}
     g.strokeStyle='#4a2d16';g.lineWidth=14;g.strokeRect(7,7,498,242);
     g.fillStyle='#f3ecdc';g.textAlign='center';g.textBaseline='middle';
-    g.font='86px "Black Han Sans", "Malgun Gothic", sans-serif';g.fillText(l1,256,104);
-    g.font='600 40px "IBM Plex Sans KR", "Malgun Gothic", sans-serif';g.fillStyle='#ffcf7a';g.fillText(l2,256,192);tex.needsUpdate=true;};
+    fit(g,l1,86,'','"Black Han Sans", "Malgun Gothic", sans-serif',460);g.fillText(l1,256,104);
+    fit(g,l2,40,'600','"IBM Plex Sans KR", "Malgun Gothic", sans-serif',460);g.fillStyle='#ffcf7a';g.fillText(l2,256,192);tex.needsUpdate=true;};
   draw();signs.push(draw);
   const grp=new THREE.Group();
   const post=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.08,2.2,6),lam(0x5a3a20));post.position.y=1.1;post.castShadow=true;grp.add(post);
   const wood=lam(0x6e4626),face=new THREE.MeshLambertMaterial({map:tex});
   const board=new THREE.Mesh(new THREE.BoxGeometry(1.6,0.8,0.08),[wood,wood,wood,wood,face,face]);board.position.y=1.85;board.castShadow=true;grp.add(board);
-  grp.position.set(x,groundH(x,z),z);grp.rotation.y=faceYaw;scene.add(grp);
+  grp.position.set(x,surfaceH(x,z),z);grp.rotation.y=faceYaw;scene.add(grp);
 }
 { // a few metres up from the start, facing the player
   const dx=-START_X/START_R,dz=-START_Z/START_R,sx=START_X+dx*5-dz*2.2,sz=START_Z+dz*5+dx*2.2;
   makeSign('소리봉','길 없음 · 어디로든 오르세요',sx,sz,Math.atan2(-dx,-dz));
 }
+for(const s of SEEDS){ // the outer ring of patches: a sign where each one starts
+  if(s.r!==300||s.type===Z_STAIRS)continue;
+  const a=s.a+0.05,x=Math.cos(a)*342,z=Math.sin(a)*342;makeSign(ZONES[s.type].name,ZONES[s.type].desc,x,z,Math.atan2(x,z));
+}
+for(const k of STAIR_STARTS){const st=STEPS[k],x=st.x-st.dz*2.2-st.dx*1.5,z=st.z+st.dx*2.2-st.dz*1.5;makeSign('구불구불 돌계단','계단마다 라디오가 들썩여요',x,z,Math.atan2(-st.dx,-st.dz));}
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>signs.forEach(f=>f()));
 
 // summit cairn + a tall flag you can see from the foot of the mountain
 let summitFlag=null;
 {
-  const g=new THREE.Group();const sm=lam(0x9a9284,{flatShading:true});
+  const g=new THREE.Group();const sm=lam(0x9a9284);
   let y=0;for(let k=0;k<7;k++){const s=0.75-k*0.08;const st=new THREE.Mesh(new THREE.DodecahedronGeometry(s,0),sm);st.scale.set(1,0.55,1);st.position.set((rand()-.5)*.15,y+s*0.45,(rand()-.5)*.15);st.rotation.y=k;st.castShadow=true;g.add(st);y+=s*0.8;}
   const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,9,6),lam(0x5a3a20));pole.position.set(1.6,4.5,0);pole.castShadow=true;g.add(pole);
   summitFlag=new THREE.Mesh(new THREE.PlaneGeometry(3,1.8,10,1),new THREE.MeshBasicMaterial({color:0xffb23e,side:THREE.DoubleSide}));
@@ -322,10 +457,11 @@ function setMuted(m){muted=m;$('muteBtn').firstChild.nodeValue=m?'소리 켜기 
 $('muteBtn').addEventListener('click',()=>{initAudio();setMuted(!muted);canvas.focus();});
 
 // ---------------------------------------------------------------- game state
-const P={x:0,z:0,y:0,yaw:0,pitch:0,vx:0,vz:0,speed:0,accel:0,lat:0,lean:0,side:0,step:0,busy:0,grace:0};
+const P={x:0,z:0,y:0,yaw:0,pitch:0,vx:0,vz:0,speed:0,accel:0,lat:0,lean:0,side:0,step:0,busy:0,grace:0,
+  yawPrev:0,yawVel:0,yawVelPrev:0,shake:0,stair:-1,zone:-1};
 const B={pitch:0,roll:0,pv:0,rv:0};
 const R={state:'carried',pos:new THREE.Vector3(),vel:new THREE.Vector3(),ang:new THREE.Vector3(),q:new THREE.Quaternion(),rest:0,pick:0,from:new THREE.Vector3(),fromQ:new THREE.Quaternion(),bounces:0,air:false,fallT:0,squash:0};
-const MAX_BOUNCES=3; // 탱탱볼처럼 최대 3번 튀고, 4번째로 땅에 닿으면 그 자리에서 멈춘다
+// 떨어질 때마다 1~3번 중 무작위로 튀고, 그다음 땅에 닿으면 그 자리에서 멈춘다
 let game='title',elapsed=0,drops=0,clock=0,titleT=0,toastT=0;
 const FALL=0.85,NO_RETURN=0.62,FWD_LIMIT=-0.12;
 const keys=new Set();
@@ -333,7 +469,8 @@ const camState={pos:new THREE.Vector3(),look:new THREE.Vector3(),drag:false,lx:0
 
 function reset(){
   P.x=START_X;P.z=START_Z;P.yaw=Math.atan2(-START_X,-START_Z);P.pitch=0.05;P.vx=0;P.vz=0;P.speed=0;P.accel=0;P.lat=0;P.lean=0;P.side=0;P.busy=0;
-  P.y=groundH(P.x,P.z);
+  P.yawPrev=P.yaw;P.yawVel=0;P.yawVelPrev=0;P.shake=0;P.stair=-1;P.zone=-1;
+  P.y=surfaceH(P.x,P.z);
   B.pitch=0;B.roll=0;B.pv=0;B.rv=0;
   attachRadio();elapsed=0;drops=0;$('drops').textContent='0';
 }
@@ -410,7 +547,7 @@ function dropRadio(){
   _v.set(tdx,0,tdz);R.ang.crossVectors(UP,_v).multiplyScalar(6.5);
   syncHolder();
   radioHolder.add(radio);radio.position.set(0,-0.17,0);radio.scale.set(1,1,1);radio.rotation.set(0,0,0);
-  R.state='falling';R.rest=0;R.bounces=0;R.air=true;R.fallT=0;R.squash=0;marker.visible=true;
+  R.state='falling';R.rest=0;R.bounces=0;R.maxB=1+Math.floor(Math.random()*3);R.air=true;R.fallT=0;R.squash=0;marker.visible=true;
   toast(B.pitch>Math.abs(B.roll)?'라디오가 뒤로 떨어졌다!':'라디오가 옆으로 떨어졌다!',2.4);
   B.pitch=0;B.roll=0;B.pv=0;B.rv=0;
 }
@@ -418,14 +555,14 @@ function updateRadioPhysics(dt){
   const sub=3,h=dt/sub;R.fallT+=dt;
   for(let s=0;s<sub&&R.state==='falling';s++){
     R.vel.y-=9.8*h;R.pos.addScaledVector(R.vel,h);
-    const g=groundH(R.pos.x,R.pos.z),rad=0.2;
+    const g=surfaceH(R.pos.x,R.pos.z),rad=0.2;
     if(R.pos.y-rad<g){
       R.pos.y=g+rad;groundN(R.pos.x,R.pos.z,_n);
       const vn=R.vel.dot(_n);
       if(R.air&&vn<0){
         // a new touch of the ground
         R.bounces++;R.air=false;R.squash=1;
-        if(R.bounces>MAX_BOUNCES||R.fallT>10){ // 4번째 착지: 그 자리에서 멈춤
+        if(R.bounces>R.maxB||R.fallT>10){ // 정해진 횟수(1~3번)만큼 튄 뒤 다음 착지에서 그 자리에 멈춤
           R.vel.set(0,0,0);R.ang.set(0,0,0);R.state='ground';playThud(3);break;
         }
         // 탱탱볼: 매번 확실히 다시 튀어 오르고, 튈수록 조금씩 낮아진다
@@ -454,7 +591,7 @@ function settleRadio(dt){
   // lie on its bottom, facing the same way
   _e.setFromQuaternion(R.q,'YXZ');_q.setFromEuler(_e.set(0,_e.y,0,'YXZ'));
   R.q.slerp(_q,1-Math.exp(-dt*6));
-  const g=groundH(R.pos.x,R.pos.z);R.pos.y=lerp(R.pos.y,g+0.17,1-Math.exp(-dt*8));
+  const g=surfaceH(R.pos.x,R.pos.z);R.pos.y=lerp(R.pos.y,g+0.17,1-Math.exp(-dt*8));
   syncHolder();
 }
 function radioDist(){return Math.hypot(R.pos.x-P.x,R.pos.z-P.z);}
@@ -494,7 +631,7 @@ function update(dt){
   const fx=Math.sin(P.yaw),fz=Math.cos(P.yaw),rx=-Math.cos(P.yaw),rz=Math.sin(P.yaw);
   let mx=fx*fwdIn+rx*strafeIn,mz=fz*fwdIn+rz*strafeIn;const ml=Math.hypot(mx,mz);if(ml>0){mx/=ml;mz/=ml;}
   const hereSlope=slopeAt(P.x,P.z);
-  const mGrade=ml>0?(groundH(P.x+mx*0.6,P.z+mz*0.6)-groundH(P.x-mx*0.6,P.z-mz*0.6))/1.2:0;
+  const mGrade=ml>0?(surfaceH(P.x+mx*0.6,P.z+mz*0.6)-surfaceH(P.x-mx*0.6,P.z-mz*0.6))/1.2:0;
   const sideSlope=(groundH(P.x+rx*0.5,P.z+rz*0.5)-groundH(P.x-rx*0.5,P.z-rz*0.5))/1.0;
   let maxSpd=(runT&&fwdIn>0?6.8:4.4)*(hereSlope>0.6?0.75:1)*(1-P.lean*0.5);
   if(fwdIn<0)maxSpd=Math.min(maxSpd,1.8);else if(fwdIn===0&&strafeIn!==0)maxSpd=Math.min(maxSpd,2.8);
@@ -516,10 +653,18 @@ function update(dt){
      for(const o of blockGrid[cz*BLN+cx]){const ox=P.x-o.x,oz=P.z-o.z,d=Math.hypot(ox,oz),min=o.r+0.32;
        if(d<min&&d>1e-4){const nx=ox/d,nz=oz/d;P.x=o.x+nx*min;P.z=o.z+nz*min;const vn=P.vx*nx+P.vz*nz;if(vn<0){P.vx-=vn*nx;P.vz-=vn*nz;}}}}}
   const pr=Math.hypot(P.x,P.z);if(pr>395){P.x*=395/pr;P.z*=395/pr;}
-  P.y=groundH(P.x,P.z);
+  P.y=surfaceH(P.x,P.z);
   P.speed=Math.hypot(P.vx,P.vz);
   P.step+=P.speed*dt*2.3;
-  const vGrade=P.speed>0.1?(groundH(P.x+P.vx/P.speed*0.6,P.z+P.vz/P.speed*0.6)-groundH(P.x-P.vx/P.speed*0.6,P.z-P.vz/P.speed*0.6))/1.2:0;
+  const vGrade=P.speed>0.1?(surfaceH(P.x+P.vx/P.speed*0.6,P.z+P.vz/P.speed*0.6)-surfaceH(P.x-P.vx/P.speed*0.6,P.z-P.vz/P.speed*0.6))/1.2:0;
+  // which patch (구간) we are in; announce it when it changes
+  const zi=zoneAt(P.x,P.z),zone=zi.w>0.45?zi.type:-1;
+  if(zone>=0&&zone!==P.zone&&playing){P.zone=zone;toast(ZONES[zone].name+' · '+ZONES[zone].desc,2.4);}
+  if(zone<0&&zi.w<0.15)P.zone=-1;
+  // mouse turning speed: a slow look is harmless, shaking the view left-right is not
+  {let dy=P.yaw-P.yawPrev;dy=Math.atan2(Math.sin(dy),Math.cos(dy));P.yawPrev=P.yaw;
+   P.yawVel=lerp(P.yawVel,dy/dt,0.5);P.shake=lerp(P.shake,Math.abs(P.yawVel),1-Math.exp(-dt/0.35));}
+  const stairNow=stepAt(P.x,P.z),stairChanged=stairNow>=0&&P.stair>=0&&stairNow!==P.stair;P.stair=stairNow;
 
   // balance
   if(R.state==='carried'&&playing){
@@ -536,7 +681,14 @@ function update(dt){
     fr+=fbm(clock*0.8,17.1)*0.4*(sp/4.4);
     fr+=P.side*1.05;
     if(sp>0.5&&Math.random()<dt*1.4){const rough=hereSlope>0.6?0.9:0.45;/* 울퉁불퉁한 산비탈 */B.pv+=(Math.random()*0.8)*rough*(sp/4.4);B.rv+=(Math.random()-.5)*1.1*rough*(sp/4.4);}
-    for(const b of bumps){b.cd=Math.max(0,b.cd-dt);if(b.cd>0)continue;const dx=b.x-P.x,dz=b.z-P.z;if(dx*dx+dz*dz<0.55&&sp>0.4){b.cd=1.5;const sev=lerp(0.55,1.05,clamp(P.y/SUMMIT_H,0,1));B.pv+=(0.75+Math.random()*0.5)*sev*(sp/4.4);B.rv+=(Math.random()-.5)*1.4*sev*(sp/4.4);hips.position.y=1.02;}}
+    // every stair step bumps the radio; harder when you hurry
+    if(stairChanged&&sp>0.3){const imp=0.06+0.012*sp*sp;B.pv+=imp*(0.8+Math.random()*0.4);B.rv+=(Math.random()-.5)*imp*0.8;hips.position.y=0.99;}
+    // rubble patch: the ground keeps shoving the load around
+    if(zi.type===Z_ROUGH&&zi.w>0.3&&sp>0.5&&Math.random()<dt*2.5*zi.w){B.pv+=Math.random()*0.5*(sp/4.4);B.rv+=(Math.random()-.5)*0.9*(sp/4.4);}
+    // jerking the view: a sudden turn kicks the radio sideways; shaking it left-right keeps pumping it over
+    {const dw=P.yawVel-P.yawVelPrev;P.yawVelPrev=P.yawVel;B.rv+=clamp(-dw*0.04,-0.25,0.25);
+     if(P.shake>2.2){const ex=P.shake-2.2,dir=Math.abs(B.roll)>0.02?Math.sign(B.roll):(Math.sign(P.yawVel)||1);fr+=dir*ex*0.35;fp+=ex*0.12;}}
+    for(const b of bumpsNear(P.x,P.z)){b.cd=Math.max(0,b.cd-dt);if(b.cd>0)continue;const dx=b.x-P.x,dz=b.z-P.z;if(dx*dx+dz*dz<0.55&&sp>0.4){b.cd=1.5;const sev=lerp(0.55,1.05,clamp(P.y/SUMMIT_H,0,1));B.pv+=(0.75+Math.random()*0.5)*sev*(sp/4.4);B.rv+=(Math.random()-.5)*1.4*sev*(sp/4.4);hips.position.y=1.02;}}
     // roots across the trail: harmless at a slow walk, nasty at a run
     for(const rt of roots){rt.cd=Math.max(0,rt.cd-dt);if(rt.cd>0)continue;const dx=P.x-rt.x,dz=P.z-rt.z,al=dx*rt.tx+dz*rt.tz,lat=Math.abs(-dx*rt.tz+dz*rt.tx);
       if(Math.abs(al)<0.3&&lat<rt.half&&sp>0.3){rt.cd=1.2;const imp=0.12+0.03*sp*sp;B.pv+=imp*(0.8+Math.random()*0.4);B.rv+=(Math.random()-.5)*imp;hips.position.y=1.0;}}
@@ -642,6 +794,7 @@ function updateHUD(){
   const t=clamp(P.y/SUMMIT_H,0,1);
   $('prog').style.width=(t*100).toFixed(1)+'%';
   $('alt').textContent='해발 '+Math.round(ALT0+P.y*ALT_SCALE)+' m · 정상까지 직선 '+Math.round(Math.hypot(P.x,P.z))+' m';
+  {const zt=P.zone>=0?ZONES[P.zone].name:'산자락';const ze=$('zoneName');if(ze.textContent!==zt)ze.textContent=zt;}
   // compass: arrow points to the summit relative to where the camera looks
   camera.getWorldDirection(projV);
   const rel=Math.atan2(-P.x,-P.z)-Math.atan2(projV.x,projV.z);
@@ -651,7 +804,8 @@ function updateHUD(){
   const lbl=$('gaugeLbl');
   let msg='라디오 균형',warn=false;
   if(R.state==='carried'&&game==='play'){
-    if(danger){warn=true;msg=B.pitch>Math.abs(B.roll)?'뒤로 넘어가요! Space':(B.roll>0?'오른쪽으로 쏠려요! Q':'왼쪽으로 쏠려요! E');}
+    if(P.shake>2.2){warn=true;msg='화면을 흔들지 마세요!';}
+    else if(danger){warn=true;msg=B.pitch>Math.abs(B.roll)?'뒤로 넘어가요! Space':(B.roll>0?'오른쪽으로 쏠려요! Q':'왼쪽으로 쏠려요! E');}
   }else if(R.state!=='carried'&&R.state!=='pickup'){msg='라디오를 주우세요';warn=true;}
   if(lbl.textContent!==msg)lbl.textContent=msg;lbl.classList.toggle('warn',warn);
   // radio lcd
@@ -707,6 +861,6 @@ function frame(now){
 document.body.classList.add('title');
 reset();
 requestAnimationFrame(frame);
-window.__game={P,B,R,get state(){return game;},keys,dropRadio,tryPickup,groundH,slopeAt,
+window.__game={P,B,R,get state(){return game;},keys,dropRadio,tryPickup,groundH,slopeAt,surfaceH,stepAt,zoneAt,SEEDS,STEPS,STAIR_STARTS,ZONES,
   step(n,dt,quiet){for(let i=0;i<n;i++)update(dt);if(!quiet){updateHUD();renderer.render(scene,camera);}},start:startGame};
 })();
