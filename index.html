@@ -15,8 +15,8 @@
 <canvas id="game" tabindex="0" aria-label="지게 라디오 게임 화면"></canvas>
 
 <div class="hud panel" id="topL">
-  <div class="name">소리봉 등산로</div>
-  <div class="alt" id="alt">해발 420 m · 정상까지 0.00 km</div>
+  <div class="name">소리봉 <span id="compass" title="정상 방향" aria-label="정상 방향">▲</span></div>
+  <div class="alt" id="alt">해발 420 m · 정상까지 직선 0 m</div>
   <div class="bar"><i id="prog"></i></div>
 </div>
 <div class="hud panel" id="topR">
@@ -62,12 +62,12 @@
   <div class="card">
     <div class="eyebrow">소리봉 · 해발 980 m · 늦가을 오후</div>
     <h1>지게 <span>라디오</span></h1>
-    <p>할아버지의 낡은 라디오를 지게에 얹고 소리봉 꼭대기까지 올라가세요. 마을 포장길을 지나면 가파른 비탈과 나무뿌리 가득한 산길이 이어지고, 라디오는 자꾸 뒤로 넘어갑니다. 떨어진 라디오는 탱탱볼처럼 세 번까지 튀다가 멈춥니다. 주워서 다시 지고 가세요.</p>
+    <p>할아버지의 낡은 라디오를 지게에 얹고 소리봉 꼭대기까지 올라가세요. 정해진 길은 없습니다. 절벽 띠와 숲 사이로 길처럼 보이는 곳을 직접 찾아 올라가야 해요. 나무에 묶인 산악회 리본, 돌무더기, 풀이 닳은 자국이 옛 등산로의 흔적입니다. 가파르면 라디오가 자꾸 뒤로 넘어갑니다. 떨어진 라디오는 탱탱볼처럼 세 번까지 튀다가 멈춥니다. 주워서 다시 지고 가세요.</p>
     <dl class="keys">
       <dt><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></dt><dd>걷기와 방향 바꾸기</dd>
       <dt><kbd>Shift</kbd></dt><dd>달리기 (빠르지만 라디오가 크게 출렁임)</dd>
       <dt><kbd>Space</kbd></dt><dd>몸을 앞으로 숙여 뒤로 쏠린 라디오 잡기 (대신 느려짐)</dd>
-      <dt><kbd>Q</kbd> <kbd>E</kbd></dt><dd>굽은 길에서 좌우로 버티기</dd>
+      <dt><kbd>Q</kbd> <kbd>E</kbd></dt><dd>옆으로 기운 비탈에서 좌우로 버티기</dd>
       <dt><kbd>F</kbd></dt><dd>떨어진 라디오 줍기 (가까이에서 Space도 됨)</dd>
     </dl>
     <button class="btn" id="startBtn" type="button">산 오르기</button>
