@@ -406,7 +406,7 @@ function dropRadio(){
   _v.set(0,0.17,0).applyQuaternion(R.q);R.pos.add(_v);
   const pb=Math.max(0,B.pitch),dirx=-fx*pb+rx*B.roll,dirz=-fz*pb+rz*B.roll,dl=Math.hypot(dirx,dirz)||1;
   const tdx=dirx/dl,tdz=dirz/dl;
-  R.vel.set(P.vx*0.5+tdx*3.0,3.4,P.vz*0.5+tdz*3.0);
+  R.vel.set(P.vx*0.5+tdx*3.0,4.2,P.vz*0.5+tdz*3.0);
   _v.set(tdx,0,tdz);R.ang.crossVectors(UP,_v).multiplyScalar(6.5);
   syncHolder();
   radioHolder.add(radio);radio.position.set(0,-0.17,0);radio.scale.set(1,1,1);radio.rotation.set(0,0,0);
@@ -429,10 +429,10 @@ function updateRadioPhysics(dt){
           R.vel.set(0,0,0);R.ang.set(0,0,0);R.state='ground';playThud(3);break;
         }
         // 탱탱볼: 매번 확실히 다시 튀어 오르고, 튈수록 조금씩 낮아진다
-        const out=Math.max(-vn*0.82,3.6-R.bounces*0.7);
+        const out=Math.max(-vn*0.9,6.6-R.bounces*1.2);   // 약 1.5m → 0.9m → 0.45m 높이로 튄다
         R.vel.addScaledVector(_n,-vn).multiplyScalar(0.6);
         _v2.copy(_n).lerp(UP,0.6).normalize();R.vel.addScaledVector(_v2,out); // 위쪽으로 튀게 해서 비탈 아래로 멀리 굴러가지 않게
-        const hs=Math.hypot(R.vel.x,R.vel.z);if(hs>3.2){R.vel.x*=3.2/hs;R.vel.z*=3.2/hs;}
+        const hs=Math.hypot(R.vel.x,R.vel.z);if(hs>2.4){R.vel.x*=2.4/hs;R.vel.z*=2.4/hs;}
         R.ang.set(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize().multiplyScalar(5+Math.random()*5);
         playBoing(R.bounces);
       }else if(vn<0){R.vel.addScaledVector(_n,-vn);}
