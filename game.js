@@ -173,13 +173,18 @@ const TREAD=0.62,STEPS=[],STAIR_STARTS=[];
     for(let k=first+1;k<last;k++)STEPS[k].top=Math.max(STEPS[k].top,STEPS[k-1].top);
     if(last>first)STAIR_STARTS.push(first);
   }
-  for(const st of STEPS){   // bed the slope under the steps so they stand ~40 cm proud
-    const ix0=Math.floor((st.x-X0)/CELL),iz0=Math.floor((st.z-Z0)/CELL);
-    for(let iz=iz0-2;iz<=iz0+3;iz++)for(let ix=ix0-2;ix<=ix0+3;ix++){
-      if(ix<0||iz<0||ix>SEGX||iz>SEGZ)continue;
-      const d=Math.hypot(X0+ix*CELL-st.x,Z0+iz*CELL-st.z),w=1-smoothstep(1.4,3.2,d);
-      if(w>0){const i=iz*VX+ix;HF[i]=lerp(HF[i],st.top-0.42,w);}
-    }
+  // carve a bench under the stairs so every step stands ~40 cm proud of the ground. Each ground
+  // point takes the height of its NEAREST step (doing it step by step let later, higher steps
+  // overwrite earlier ones), and the bench is wide enough that a cross-slope can't bury the edges.
+  const near=makeGrid(6);STEPS.forEach((st,k)=>gridAdd(near,st.x,st.z,k));
+  const touched=new Set();
+  for(const st of STEPS){const ix0=Math.round((st.x-X0)/CELL),iz0=Math.round((st.z-Z0)/CELL);
+    for(let iz=iz0-2;iz<=iz0+2;iz++)for(let ix=ix0-2;ix<=ix0+2;ix++)if(ix>=0&&iz>=0&&ix<=SEGX&&iz<=SEGZ)touched.add(iz*VX+ix);}
+  for(const i of touched){
+    const x=X0+(i%VX)*CELL,z=Z0+((i/VX)|0)*CELL;let bd=1e9;const cand=[];
+    gridEach(near,x,z,k=>{const d=Math.hypot(x-STEPS[k].x,z-STEPS[k].z);if(d<5){cand.push([d,STEPS[k].top]);if(d<bd)bd=d;}});
+    let bt=1e9;for(const [d,t] of cand)if(d<bd+1.3)bt=Math.min(bt,t);   // the lowest of the closest steps, so no step's edge gets covered
+    const w=1-smoothstep(1.9,4.0,bd);if(w>0&&bt<1e8)HF[i]=lerp(HF[i],bt-0.45,w);
   }
 }
 const stepGrid=makeGrid(6);STEPS.forEach((st,k)=>gridAdd(stepGrid,st.x,st.z,k));
@@ -288,7 +293,10 @@ function instMesh(geo,mat,list,fn,shadow){const m=new THREE.InstancedMesh(geo,ma
   list.forEach((t,i)=>{fn(t,dummy,c);dummy.updateMatrix();m.setMatrixAt(i,dummy.matrix);m.setColorAt(i,c);});m.instanceMatrix.needsUpdate=true;if(m.instanceColor)m.instanceColor.needsUpdate=true;scene.add(m);return m;}
 
 // stone steps
-instMesh(new THREE.BoxGeometry(1,1,1),lam(0xffffff),STEPS,(st,d,c)=>{const k=STEPS.indexOf(st);d.position.set(st.x,st.top-0.475,st.z);d.rotation.set(0,Math.atan2(st.dx,st.dz)+(hash2(k,3)-0.5)*0.08,0);d.scale.set(2.3+hash2(k,5)*0.3,0.95,TREAD+0.05);const v=0.5+hash2(k,9)*0.12;c.setRGB(v+0.02,v,v-0.04);});
+instMesh(new THREE.BoxGeometry(1,1,1),lam(0xffffff),STEPS,(st,d,c)=>{const k=STEPS.indexOf(st);
+  let low=st.top;for(const a of [-1.2,0,1.2])for(const b of [-0.35,0.35])low=Math.min(low,groundH(st.x-st.dz*a+st.dx*b,st.z+st.dx*a+st.dz*b));
+  const hgt=Math.max(0.95,st.top-low+0.35);   // reach down to the ground so no step floats
+  d.position.set(st.x,st.top-hgt/2,st.z);d.rotation.set(0,Math.atan2(st.dx,st.dz)+(hash2(k,3)-0.5)*0.08,0);d.scale.set(2.3+hash2(k,5)*0.3,hgt,TREAD+0.05);const v=0.5+hash2(k,9)*0.12;c.setRGB(v+0.02,v,v-0.04);});
 
 // water: the river on the canyon floor, the creek, and the waterfall
 // where the north canyon wall meets the slope above it (the lip the creek spills over)
