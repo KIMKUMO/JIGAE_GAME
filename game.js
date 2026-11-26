@@ -470,6 +470,7 @@ function updatePickup(dt){
 
 // ---------------------------------------------------------------- update
 function update(dt){
+  if(!(dt>0))return;
   clock+=dt;
   const playing=game==='play';
   if(playing)elapsed+=dt;
@@ -496,7 +497,9 @@ function update(dt){
   const tvx=ml>0?mx*maxSpd:0,tvz=ml>0?mz*maxSpd:0;
   const pvx=P.vx,pvz=P.vz;
   {let dvx=tvx-P.vx,dvz=tvz-P.vz;const dvl=Math.hypot(dvx,dvz),rate=(Math.hypot(tvx,tvz)>Math.hypot(P.vx,P.vz)?4.5:7)*dt;
-   if(dvl>rate){dvx*=rate/dvl;dvz*=rate/dvl;}P.vx+=dvx;P.vz+=dvz;}
+   if(dvl>rate&&dvl>1e-9){dvx*=rate/dvl;dvz*=rate/dvl;}P.vx+=dvx;P.vz+=dvz;}
+  if(!isFinite(P.vx)||!isFinite(P.vz)){P.vx=0;P.vz=0;}
+  if(!isFinite(P.x)||!isFinite(P.z)){P.x=START_X;P.z=START_Z;}
   // acceleration in the body frame: only real changes of walking speed/direction show up here,
   // so looking around never moves the radio by itself
   {const ax=(P.vx-pvx)/Math.max(dt,1e-3),az=(P.vz-pvz)/Math.max(dt,1e-3);
@@ -680,7 +683,8 @@ let last=performance.now();
 let slowFrames=0,frameCount=0,reportedLoopError=false;
 function frame(now){
   requestAnimationFrame(frame);                       // schedule first so one bad frame can't freeze the game
-  const raw=(now-last)/1000,dt=Math.min(0.05,raw);last=now;
+  // the first rAF timestamp can be earlier than performance.now() taken at load: never let dt go negative
+  const raw=(now-last)/1000,dt=clamp(isFinite(raw)?raw:0,0,0.05);last=now;
   try{update(dt);updateHUD();updateAudio();}
   catch(err){if(!reportedLoopError){reportedLoopError=true;console.error(err);showError('게임 실행 중 오류가 났어요','새로고침(Ctrl+Shift+R)해 보세요. 계속되면 이 문구를 알려주세요: '+err.message);}}
   if(!isFinite(camera.position.x)||!isFinite(camera.position.y)||!isFinite(camera.position.z)){P.pitch=0;if(!isFinite(P.yaw))P.yaw=0;camera.position.set(P.x,P.y+1.7,P.z);}
