@@ -58,11 +58,15 @@ function cliffGap(x){let g=0;for(const gp of CLIFF.gaps)g=Math.max(g,1-smoothste
 function cliffAdd(x,z){const w=lerp(1.8,32,cliffGap(x)),zc=cliffZ(x);return 16*smoothstep(zc-w,zc+w,z);}
 
 // canyon (계곡) with a river: walls you cannot climb, except the ramps at the ford (여울)
-const CAN={z:540+lrand()*80,p1:lrand()*6.28,p2:lrand()*6.28,depth:17,floorHW:5};
+const CAN={z:540+lrand()*80,p1:lrand()*6.28,p2:lrand()*6.28,depth:28,floorHW:5};   // a deep gorge on the steep mountain
 function canyonZ(x){return CAN.z+30*Math.sin(x/150+CAN.p1)+11*Math.sin(x/57+CAN.p2);}
-let FORD_X,BRIDGE_X,FALL_X;
-{FORD_X=-420+lrand()*840;do{BRIDGE_X=-420+lrand()*840;}while(Math.abs(BRIDGE_X-FORD_X)<320);
- do{FALL_X=-430+lrand()*860;}while(Math.abs(FALL_X-FORD_X)<150||Math.abs(FALL_X-BRIDGE_X)<130);}
+// four bridges spread along the canyon: two rope bridges, a single-log bridge and a stone bridge
+let FORD_X,BRIDGE_X,FALL_X;const BRIDGE_XS=[],BRIDGE_KIND_LIST=['rope','log','rope','stone'];
+{FORD_X=-420+lrand()*840;
+ for(let tries=0;tries<500&&BRIDGE_XS.length<BRIDGE_KIND_LIST.length;tries++){const x=-450+lrand()*900;
+   if(Math.abs(x-FORD_X)<110||BRIDGE_XS.some(b=>Math.abs(b-x)<150))continue;BRIDGE_XS.push(x);}
+ BRIDGE_X=BRIDGE_XS[0];
+ for(let tries=0;tries<500;tries++){FALL_X=-430+lrand()*860;if(Math.abs(FALL_X-FORD_X)>=120&&BRIDGE_XS.every(b=>Math.abs(FALL_X-b)>=80))break;}}
 function fordW(x){return 1-smoothstep(16,40,Math.abs(x-FORD_X));}
 function canyonFloor(x){return mtnShape(x,canyonZ(x))-CAN.depth+fordW(x)*7;}
 function canyonCut(x,z,h){
@@ -97,7 +101,7 @@ const PATCHES=[];
     const R=34+lrand()*28,x=-495+lrand()*990,z=MTN_Z0+70+lrand()*(1050-MTN_Z0-70);
     if(Math.abs(z-canyonZ(x))<R+28||Math.abs(z-cliffZ(x))<R+14)continue;
     if(Math.hypot(x-SUMMIT_X,z-SUMMIT_Z)<R+45)continue;
-    if(Math.hypot(x-BRIDGE_X,z-canyonZ(BRIDGE_X))<R+50||Math.hypot(x-FORD_X,z-canyonZ(FORD_X))<R+50)continue;
+    if(BRIDGE_XS.some(bx=>Math.hypot(x-bx,z-canyonZ(bx))<R+50)||Math.hypot(x-FORD_X,z-canyonZ(FORD_X))<R+50)continue;
     if(Math.abs(x-FALL_X)<R+14&&z>CREEK_Z0-20&&z<CREEK_Z1+R)continue;
     if(PATCHES.some(p=>Math.hypot(p.x-x,p.z-z)<p.R+R+12))continue;
     const e=3,gx=(mtnShape(x+e,z)-mtnShape(x-e,z))/(2*e),gz=(mtnShape(x,z+e)-mtnShape(x,z-e))/(2*e),gl=Math.hypot(gx,gz)||1;
@@ -185,15 +189,23 @@ function stepAt(x,z){let best=-1,bd=1e9;
   return best;}
 
 // ---------------------------------------------------------------- swaying rope bridge (흔들다리)
-const BR={x:BRIDGE_X,zc:canyonZ(BRIDGE_X),half:1.0};BR.z0=BR.zc-21;BR.z1=BR.zc+21;
-BR.y0=groundH(BR.x,BR.z0)+0.2;BR.y1=groundH(BR.x,BR.z1)+0.2;
-const BS={ang:0,vel:0,bob:0};
-function bridgeDeck(z){const u=clamp((z-BR.z0)/(BR.z1-BR.z0),0,1);return lerp(BR.y0,BR.y1,u)-1.8*4*u*(1-u)+BS.bob*4*u*(1-u);}
-function onBridge(x,z,y){return z>BR.z0-0.5&&z<BR.z1+0.5&&Math.abs(x-BR.x)<1.4&&(y===undefined||y>bridgeDeck(z)-3);}
+const BRIDGE_KINDS={
+  rope: {name:'흔들다리',   desc:'천천히, Q/E로 버티며 건너세요',     toast:'흔들다리 · 뛰면 크게 흔들려요',          half:1.05,rail:0.9, sag:1.8},
+  log:  {name:'외나무다리', desc:'가운데로! 떨어지면 계곡 아래예요',  toast:'외나무다리 · A/D로 가운데를 지키세요',    half:0.5, rail:0,   sag:0.4},
+  stone:{name:'돌다리',     desc:'흔들리지 않는 튼튼한 다리예요',      toast:'돌다리 · 흔들림 없이 건너요',             half:1.6, rail:1.35,sag:-1.4},
+};
+// each bridge spans exactly from rim to rim (where the gorge wall meets the slope), plus a little
+function rimDist(x,side){const zc=canyonZ(x);for(let d=CAN.floorHW+1;d<70;d+=0.5){const z=zc+side*d;if(slopeAt(x,z)<0.9&&slopeAt(x,z+side)<0.9)return d;}return 30;}
+const BRIDGES=BRIDGE_XS.map((x,i)=>{const kind=BRIDGE_KIND_LIST[i],zc=canyonZ(x),b={x,zc,kind,K:BRIDGE_KINDS[kind],z0:zc-rimDist(x,-1)-2.5,z1:zc+rimDist(x,1)+2.5,ang:0,vel:0,bob:0,group:null};
+  b.y0=groundH(x,b.z0)+0.2;b.y1=groundH(x,b.z1)+0.2;return b;});
+function bridgeDeck(b,z){const u=clamp((z-b.z0)/(b.z1-b.z0),0,1);return lerp(b.y0,b.y1,u)-b.K.sag*4*u*(1-u)+b.bob*4*u*(1-u);}
+// the bridge under (x,z), or null; yHint keeps things down in the canyon from snapping up onto it
+function bridgeAt(x,z,y){for(const b of BRIDGES){if(z>b.z0-0.5&&z<b.z1+0.5&&Math.abs(x-b.x)<b.K.half+0.35&&(y===undefined||y>bridgeDeck(b,z)-3))return b;}return null;}
+function onBridge(x,z,y){return !!bridgeAt(x,z,y);}
 // walking surface: ground, a stair step, or the bridge deck (yHint keeps things under the bridge on the ground)
 function surfaceH(x,z,yHint){
   const g=groundH(x,z);
-  if(onBridge(x,z,yHint))return Math.max(g,bridgeDeck(z));
+  const br=bridgeAt(x,z,yHint);if(br)return Math.max(g,bridgeDeck(br,z));
   const k=stepAt(x,z);return k>=0?Math.max(g,STEPS[k].top):g;
 }
 // only the real barriers count as cliffs: the canyon walls (except the ford) and the cliff band
@@ -336,18 +348,31 @@ function softTex(inner,outer){const cv=document.createElement('canvas');cv.width
     sp.userData.base=5+hash2(k,4)*4;sp.userData.y=floorY+1.2+hash2(k,6)*2.5;sp.position.set(FALL_X+(hash2(k,2)-0.5)*7,sp.userData.y,zBot-1-hash2(k,1)*3.5);sp.scale.setScalar(sp.userData.base);scene.add(sp);WF.mist.push(sp);}
 }
 
-// the rope bridge: hangs from a pivot above the deck so it can swing sideways
-const bridgeGroup=new THREE.Group();
-{
-  const pivotY=Math.max(BR.y0,BR.y1)+2.5;bridgeGroup.position.set(BR.x,pivotY,0);scene.add(bridgeGroup);
-  const plankMat=lam(0x8a6038),ropeMat=lam(0x5a4630);
-  for(let z=BR.z0;z<=BR.z1;z+=0.55){const p=new THREE.Mesh(new THREE.BoxGeometry(2.1,0.08,0.42),plankMat);p.position.set((hash2(z*10|0,1)-0.5)*0.06,bridgeDeck(z)-0.04-pivotY,z);p.castShadow=true;p.receiveShadow=true;bridgeGroup.add(p);}
-  for(const sx of [-1.05,1.05]){
-    for(let z=BR.z0;z<BR.z1;z+=1.5){const a=bridgeDeck(z)+1.0-pivotY,b=bridgeDeck(z+1.5)+1.0-pivotY,len=Math.hypot(1.5,b-a);
-      const r=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,len,4),ropeMat);r.position.set(sx,(a+b)/2,z+0.75);r.rotation.x=Math.atan2(1.5,b-a);bridgeGroup.add(r);
-      const v=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,1.0,3),ropeMat);v.position.set(sx,a-0.5,z);bridgeGroup.add(v);}
+// bridges: rope bridges hang from a pivot above the deck so they can swing sideways
+for(const br of BRIDGES){
+  const wood=lam(0x8a6038),dark=lam(0x5a3a20);
+  if(br.kind==='rope'){
+    const g=new THREE.Group(),pivotY=Math.max(br.y0,br.y1)+2.5;g.position.set(br.x,pivotY,0);scene.add(g);br.group=g;
+    const ropeMat=lam(0x5a4630);
+    for(let z=br.z0;z<=br.z1;z+=0.55){const p=new THREE.Mesh(new THREE.BoxGeometry(2.1,0.08,0.42),wood);p.position.set((hash2(z*10|0,1)-0.5)*0.06,bridgeDeck(br,z)-0.04-pivotY,z);p.castShadow=true;p.receiveShadow=true;g.add(p);}
+    for(const sx of [-1.05,1.05])for(let z=br.z0;z<br.z1;z+=1.5){const a=bridgeDeck(br,z)+1.0-pivotY,b=bridgeDeck(br,z+1.5)+1.0-pivotY,len=Math.hypot(1.5,b-a);
+      const r=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,len,4),ropeMat);r.position.set(sx,(a+b)/2,z+0.75);r.rotation.x=Math.atan2(1.5,b-a);g.add(r);
+      const v=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,1.0,3),ropeMat);v.position.set(sx,a-0.5,z);g.add(v);}
+    for(const [z,y] of [[br.z0,br.y0],[br.z1,br.y1]])for(const sx of [-1.2,1.2]){const post=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.14,2.4,6),dark);post.position.set(br.x+sx,y+1.0,z);post.castShadow=true;scene.add(post);}
+  }else if(br.kind==='log'){
+    // one fallen trunk across the gap, bark side up, with a few broken branch stubs
+    const N=8;for(let k=0;k<N;k++){const za=lerp(br.z0-1.5,br.z1+1.5,k/N),zb=lerp(br.z0-1.5,br.z1+1.5,(k+1)/N),ya=bridgeDeck(br,za)-0.38,yb=bridgeDeck(br,zb)-0.38,len=Math.hypot(zb-za,yb-ya);
+      const seg=new THREE.Mesh(new THREE.CylinderGeometry(0.42,0.46,len+0.05,9),lam(0x6b4a2b));seg.position.set(br.x,(ya+yb)/2,(za+zb)/2);seg.rotation.x=Math.atan2(zb-za,yb-ya);seg.castShadow=true;seg.receiveShadow=true;scene.add(seg);}
+    for(let k=0;k<5;k++){const z=lerp(br.z0+3,br.z1-3,hash2(k,11)),side=k%2?1:-1,st=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.09,0.7,5),dark);st.position.set(br.x+side*0.45,bridgeDeck(br,z)-0.2,z);st.rotation.z=side*1.1;scene.add(st);}
+    { // the torn-up root plate sits off to one side of the far end, out of the way
+      const ball=new THREE.Mesh(new THREE.DodecahedronGeometry(1.0,0),lam(0x5b3f25));ball.position.set(br.x+1.5,br.y1+0.3,br.z1+2.5);ball.scale.set(1,0.8,0.45);ball.castShadow=true;scene.add(ball);}
+  }else{
+    // arched stone bridge with low parapets and two piers down to the river
+    const stone=lam(0x9a948a),stone2=lam(0x86807a);
+    for(let z=br.z0-1;z<=br.z1+1;z+=0.85){const y=bridgeDeck(br,z),slab=new THREE.Mesh(new THREE.BoxGeometry(3.3,0.55,0.88),hash2(z*7|0,2)>0.5?stone:stone2);slab.position.set(br.x,y-0.28,z);slab.castShadow=true;slab.receiveShadow=true;scene.add(slab);
+      for(const sx of [-1.55,1.55]){const w=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.65,0.86),stone2);w.position.set(br.x+sx,y+0.3,z);w.castShadow=true;scene.add(w);}}
+    for(const u of [0.34,0.66]){const z=lerp(br.z0,br.z1,u),top=bridgeDeck(br,z)-0.5,bot=canyonFloor(br.x)-0.5,pier=new THREE.Mesh(new THREE.CylinderGeometry(1.1,1.5,top-bot,8),stone2);pier.position.set(br.x,(top+bot)/2,z);pier.castShadow=true;scene.add(pier);}
   }
-  for(const [z,y] of [[BR.z0,BR.y0],[BR.z1,BR.y1]])for(const sx of [-1.2,1.2]){const post=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.14,2.4,6),lam(0x5a3a20));post.position.set(BR.x+sx,y+1.0,z);post.castShadow=true;scene.add(post);}
 }
 
 // trees, rocks, silver grass
@@ -357,7 +382,7 @@ function nearStairs(x,z,d){let hit=false;gridEach(stepGrid,x,z,k=>{if(Math.hypot
 function keepClear(x,z){ // places where nothing should grow
   if(Math.abs(z-canyonZ(x))<24)return true;
   if(z>CREEK_Z0-4&&z<CREEK_Z1+2&&Math.abs(x-creekX(z))<5)return true;
-  if(Math.abs(x-BR.x)<5&&z>BR.z0-10&&z<BR.z1+10)return true;
+  for(const br of BRIDGES)if(Math.abs(x-br.x)<5&&z>br.z0-10&&z<br.z1+10)return true;
   if(z<START_Z+20&&START_SLOTS.some(s=>Math.abs(x-s)<12))return true;
   if(Math.hypot(x-SUMMIT_X,z-SUMMIT_Z)<14)return true;
   return false;
@@ -480,8 +505,7 @@ function makeSign(l1,l2,x,z,faceYaw){
 }
 for(const sx of START_SLOTS)makeSign('소리봉 정상 '+(Math.hypot(SUMMIT_X-sx,SUMMIT_Z-START_Z)/1000).toFixed(1)+'km','길 없음 · 어디로든 오르세요',sx+2.5,START_Z+5,Math.atan2(0,-1));
 for(const p of PATCHES){const x=p.x-p.ux*(p.R+2)+p.uz*3,z=p.z-p.uz*(p.R+2)-p.ux*3;makeSign(ZONES[p.type].name,ZONES[p.type].desc,x,z,Math.atan2(-p.ux,-p.uz));}
-makeSign('흔들다리','천천히 건너세요',BR.x+2.4,BR.z0-2,Math.atan2(0,-1));
-makeSign('흔들다리','천천히 건너세요',BR.x-2.4,BR.z1+2,Math.atan2(0,1));
+for(const br of BRIDGES){makeSign(br.K.name,br.K.desc,br.x+br.K.half+1.6,br.z0-3,Math.atan2(0,-1));makeSign(br.K.name,br.K.desc,br.x-br.K.half-1.6,br.z1+3,Math.atan2(0,1));}
 makeSign('여울','물을 건너 계곡을 넘어요',FORD_X+4,canyonZ(FORD_X)-26,Math.atan2(0,-1));
 for(const gp of CLIFF.gaps)makeSign('절벽 틈','여기로 오를 수 있어요',gp.x+gp.hw-3,cliffZ(gp.x)-34,Math.atan2(0,-1));
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>signs.forEach(f=>f()));
@@ -793,18 +817,20 @@ function update(dt){
 
   // where are we?
   const zi=zoneAt(P.x,P.z),zt=zi.type,zw=zi.w;
-  const bridgeNow=onBridge(P.x,P.z,P.y),stairNow=stepAt(P.x,P.z),wet=inWater(P.x,P.z,P.y);
+  const brNow=bridgeAt(P.x,P.z,P.y),bridgeNow=!!brNow,stairNow=stepAt(P.x,P.z),wet=inWater(P.x,P.z,P.y);
   const zone=zw>0.45?zt:-1;
   if(zone>=0&&zone!==P.zone&&playing){P.zone=zone;toast(ZONES[zone].name+' · '+ZONES[zone].desc,3);}
   if(zone<0&&zw<0.15)P.zone=-1;
-  if(bridgeNow&&!P.wasBridge&&playing)toast('흔들다리 · 뛰면 크게 흔들려요',2.2);
-  P.wasBridge=bridgeNow;
+  if(brNow&&P.wasBridge!==brNow&&playing)toast(brNow.K.toast,2.2);
+  P.wasBridge=brNow||false;
   if(wet&&!P.wasWet&&playing)toast('물살 · 발이 느려지고 미끄러워요',2);
   P.wasWet=wet;
 
   // the body faces where you look; the mouse sets P.yaw directly
   const fx=Math.sin(P.yaw),fz=Math.cos(P.yaw),rx=-Math.cos(P.yaw),rz=Math.sin(P.yaw);
+  if(brNow&&brNow.kind==='log')strafeIn*=0.3;   // on the log, A/D are small careful side-steps
   let mx=fx*fwdIn+rx*strafeIn,mz=fz*fwdIn+rz*strafeIn;const ml=Math.hypot(mx,mz);if(ml>0){mx/=ml;mz/=ml;}
+  const mScale=(brNow&&brNow.kind==='log'&&fwdIn===0)?0.3:1;
   const hereSlope=(bridgeNow||stairNow>=0)?0:slopeAt(P.x,P.z);
   const mGrade=ml>0?(surfaceH(P.x+mx*0.6,P.z+mz*0.6,P.y)-surfaceH(P.x-mx*0.6,P.z-mz*0.6,P.y))/1.2:0;
   const sideSlope=bridgeNow?0:(groundH(P.x+rx*0.5,P.z+rz*0.5)-groundH(P.x-rx*0.5,P.z-rz*0.5))/1.0;
@@ -818,7 +844,7 @@ function update(dt){
   // cliffs and canyon walls can't be climbed: go round, or find the gap, the ford or the bridge
   const wall=ml>0&&mGrade>1.45&&!bridgeNow&&isCliffFeature(P.x+mx*0.6,P.z+mz*0.6);
   if(wall){maxSpd=0;if(toastT<=0&&playing)toast('절벽이라 오를 수 없어요. 다른 길을 찾으세요',2.2);}
-  const tvx=ml>0?mx*maxSpd:0,tvz=ml>0?mz*maxSpd:0;
+  const tvx=ml>0?mx*maxSpd*mScale:0,tvz=ml>0?mz*maxSpd*mScale:0;
   const pvx=P.vx,pvz=P.vz;
   // traction: mossy rock and water barely let you speed up, slow down or turn
   const speedingUp=Math.hypot(tvx,tvz)>Math.hypot(P.vx,P.vz);
@@ -833,7 +859,7 @@ function update(dt){
   P.x+=P.vx*dt;P.z+=P.vz*dt;
   // loose ground: scree slides you down; on the steep pitch you slide back unless you keep climbing
   if(!bridgeNow&&stairNow<0){
-    if(zt===Z_SCREE&&zw>0.2){downhill(P.x,P.z,_dh);const s=zw*(0.8+1.2*Math.min(1,slopeAt(P.x,P.z)*2));P.x+=_dh.x*s*dt;P.z+=_dh.z*s*dt;}
+    if(zt===Z_SCREE&&zw>0.2){downhill(P.x,P.z,_dh);const s=zw*(0.5+0.7*Math.min(1,slopeAt(P.x,P.z)))*(fwdIn>0?0.3:1);   /* slides you down when you stop; keep walking and it only drags a little */P.x+=_dh.x*s*dt;P.z+=_dh.z*s*dt;}
     if(zt===Z_STEEP&&zw>0.2&&fwdIn<=0){downhill(P.x,P.z,_dh);const s=1.8*zw*Math.min(1,slopeAt(P.x,P.z)*1.5);P.x+=_dh.x*s*dt;P.z+=_dh.z*s*dt;}
   }
   // fallen logs: stepping over one slows you and jolts the load
@@ -860,10 +886,14 @@ function update(dt){
   gridEach(blockG,P.x,P.z,o=>{const ox=P.x-o.x,oz=P.z-o.z,d=Math.hypot(ox,oz),min=o.r+0.32;
     if(d<min&&d>1e-4){const nx=ox/d,nz=oz/d;P.x=o.x+nx*min;P.z=o.z+nz*min;const vn=P.vx*nx+P.vz*nz;if(vn<0){P.vx-=vn*nx;P.vz-=vn*nz;}}});
   // the bridge has rope rails
-  if(bridgeNow&&P.z>BR.z0+0.6&&P.z<BR.z1-0.6){const lim=0.9;if(Math.abs(P.x-BR.x)>lim){P.x=BR.x+Math.sign(P.x-BR.x)*lim;P.vx*=0.3;}}
+  if(brNow&&brNow.K.rail>0&&P.z>brNow.z0+0.6&&P.z<brNow.z1-0.6){const lim=brNow.K.rail;if(Math.abs(P.x-brNow.x)>lim){P.x=brNow.x+Math.sign(P.x-brNow.x)*lim;P.vx*=0.3;}}
+  // the single log rolls under your feet and nudges you sideways; no rails
+  if(brNow&&brNow.kind==='log')P.x+=fbm(clock*0.8,brNow.x)*0.8*dt*(0.6+P.speed*0.35);
   P.x=clamp(P.x,MAP.x0,MAP.x1);P.z=clamp(P.z,MAP.z0,MAP.z1);
   const prevY=P.y;
   P.y=surfaceH(P.x,P.z,prevY);
+  // stepping off a bridge (or any sudden drop): you land hard and the radio flies off
+  if(playing&&prevY-P.y>2.5&&R.state==='carried'){B.pitch=0.9;dropRadio();toast(P.wasBridge?'다리에서 떨어졌어요!':'높은 데서 떨어졌어요!',2.4);}
   // stepping off a cliff edge: you tumble down and the radio goes flying
   if(!bridgeNow&&stairNow<0&&slopeAt(P.x,P.z)>1.7&&isCliffFeature(P.x,P.z)){
     downhill(P.x,P.z,_dh);P.vx=_dh.x*4;P.vz=_dh.z*4;
@@ -878,10 +908,9 @@ function update(dt){
   const stairChanged=stairNow>=0&&P.stair>=0&&stairNow!==P.stair;P.stair=stairNow;
 
   // the rope bridge swings; walking pumps it, running pumps it hard
-  {let drive=0;if(bridgeNow&&P.speed>0.3)drive=Math.sin(P.step*0.5)*P.speed*P.speed*0.09;
-   BS.vel+=(-14*BS.ang-0.35*BS.vel+drive)*dt;BS.ang=clamp(BS.ang+BS.vel*dt,-0.35,0.35);
-   BS.bob=lerp(BS.bob,bridgeNow?-0.35-Math.abs(Math.sin(P.step))*0.12:0,0.1);
-   bridgeGroup.rotation.z=BS.ang;}
+  for(const br of BRIDGES){if(br.kind!=='rope')continue;const on=brNow===br;let drive=0;if(on&&P.speed>0.3)drive=Math.sin(P.step*0.5)*P.speed*P.speed*0.09;
+   br.vel+=(-14*br.ang-0.35*br.vel+drive)*dt;br.ang=clamp(br.ang+br.vel*dt,-0.35,0.35);
+   br.bob=lerp(br.bob,on?-0.35-Math.abs(Math.sin(P.step))*0.12:0,0.1);br.group.rotation.z=br.ang;}
   // gust timer (only matters on the ridges)
   WIND.t-=dt;
   if(WIND.on>0){WIND.on-=dt;const ph=1-WIND.on/WIND.dur;WIND.str=Math.sin(ph*Math.PI)*WIND.peak;WIND.x=Math.cos(WIND.dir)*WIND.str;WIND.z=Math.sin(WIND.dir)*WIND.str;if(WIND.on<=0){WIND.str=0;WIND.x=WIND.z=0;}}
@@ -917,7 +946,8 @@ function update(dt){
     // windy ridge: gusts lean the radio away from the wind (hold it with Q/E, or turn into the wind)
     if(zt===Z_WIND&&WIND.on>0){const wr=WIND.x*rx+WIND.z*rz,wf=WIND.x*fx+WIND.z*fz;fr+=wr*0.62*zw;fp+=-wf*0.4*zw;}
     // the rope bridge rolls the radio with it
-    if(bridgeNow){fr+=BS.ang*5+BS.vel*0.5;fp+=Math.abs(BS.vel)*0.08;}
+    if(brNow&&brNow.kind==='rope'){fr+=brNow.ang*5+brNow.vel*0.5;fp+=Math.abs(brNow.vel)*0.08;}
+    if(brNow&&brNow.kind==='log'){fr+=(P.x-brNow.x)*1.6+fbm(clock*1.6,brNow.x+3)*0.6;}   // off-centre on the log, the load leans out
     // jerking the view: a sudden turn kicks the radio sideways; shaking it left-right keeps pumping it over
     {const dw=P.yawVel-P.yawVelPrev;P.yawVelPrev=P.yawVel;B.rv+=clamp(-dw*0.04,-0.25,0.25);
      if(P.shake>2.2){const ex=P.shake-2.2,dir=Math.abs(B.roll)>0.02?Math.sign(B.roll):(Math.sign(P.yawVel)||1);fr+=dir*ex*0.35;fp+=ex*0.12;}}
@@ -994,7 +1024,7 @@ function updateCamera(dt){
   _v.x+=Math.sin(P.yaw)*0.26;_v.z+=Math.cos(P.yaw)*0.26;_v.y+=0.02;
   _v.y=Math.max(_v.y,groundH(_v.x,_v.z)+0.4);
   camera.position.copy(_v);camState.pos.copy(_v);
-  camera.rotation.set(P.pitch,P.yaw+Math.PI,P.wasBridge?BS.ang*0.6:0,'YXZ');   // the view rolls with the rope bridge
+  camera.rotation.set(P.pitch,P.yaw+Math.PI,P.wasBridge&&P.wasBridge.kind==='rope'?P.wasBridge.ang*0.6:0,'YXZ');   // the view rolls with a rope bridge
   const fov=lerp(camera.fov,P.speed>4.8?78:70,1-Math.exp(-dt*3));
   if(Math.abs(fov-camera.fov)>0.01){camera.fov=fov;camera.updateProjectionMatrix();}
 }
@@ -1103,6 +1133,6 @@ function frame(now){
 document.body.classList.add('title');
 reset();
 requestAnimationFrame(frame);
-window.__game={P,B,R,BS,WIND,LAYOUT_SEED,get state(){return game;},get fog(){return fogMix;},keys,dropRadio,tryPickup,groundH,slopeAt,surfaceH,stepAt,zoneAt,onBridge,inWater,canyonZ,canyonFloor,cliffZ,CLIFF,BR,FORD_X,FALL_X,PATCHES,STEPS,STAIR_STARTS,ZONES,ROCKS,LOGS,HOLES,isCliffFeature,SUMMIT_X,SUMMIT_Z,SUMMIT_H,START_SLOTS,
+window.__game={P,B,R,WIND,LAYOUT_SEED,get state(){return game;},get fog(){return fogMix;},keys,dropRadio,tryPickup,groundH,slopeAt,surfaceH,stepAt,zoneAt,onBridge,bridgeAt,bridgeDeck,inWater,canyonZ,canyonFloor,cliffZ,CLIFF,BRIDGES,FORD_X,FALL_X,PATCHES,STEPS,STAIR_STARTS,ZONES,ROCKS,LOGS,HOLES,isCliffFeature,SUMMIT_X,SUMMIT_Z,SUMMIT_H,START_SLOTS,
   step(n,dt,quiet){for(let i=0;i<n;i++)update(dt);if(!quiet){updateHUD();renderer.render(scene,camera);}},start:startGame};
 })();
