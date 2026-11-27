@@ -683,7 +683,7 @@ function reset(){
   P.y=surfaceH(P.x,P.z);
   B.pitch=0;B.roll=0;B.pv=0;B.rv=0;
   attachRadio();elapsed=0;drops=0;$('drops').textContent='0';
-  if(typeof evEnd==='function'&&EV){evEnd();EV.t=28;EV.last=-1;}
+  if(typeof evEnd==='function'&&EV){evEnd();EV.t=45;EV.last=-1;}
 }
 function attachRadio(){radioPivot.add(radio);radio.position.set(0,0,0);radio.rotation.set(0,0,0);R.state='carried';R.squash=0;radioSquash.scale.set(1,1,1);marker.visible=false;}
 function syncHolder(){
@@ -845,7 +845,7 @@ let fogMix=0;
 // a boar charges, a wasp swarm gives chase, a branch snaps overhead, or a snake lies in your way.
 // Each is announced (sound, message and direction arrow) a moment before it strikes, each can be
 // dodged, and when it is over it is gone: nothing keeps bothering you.
-const EV={t:28,cur:null,last:-1,n:0,buzz:null};
+const EV={t:45,cur:null,last:-1,n:0,buzz:null};
 const EV_NAMES={magpie:'까치',boar:'멧돼지',wasps:'말벌 떼',branch:'부러진 가지',snake:'뱀'};
 const EV_KINDS=Object.keys(EV_NAMES);
 const evRoot=new THREE.Group();scene.add(evRoot);
@@ -919,7 +919,7 @@ const alertEl=$('alert');
 function evAlert(msg){EV.msg=msg;}
 function evArrow(x,z){camera.getWorldDirection(projV);let a=Math.atan2(x-P.x,z-P.z)-Math.atan2(projV.x,projV.z);a=Math.atan2(Math.sin(a),Math.cos(a));
   const d=Math.abs(a);return d<0.45?'↑':d>2.6?'↓':a>0?(d<1.4?'↖':'←'):(d<1.4?'↗':'→');}
-function evEnd(){const e=EV.cur;if(!e)return;for(const k of EV_KINDS){evM[k].g.visible=false;}evM.branch.shadow.visible=false;stopBuzz();EV.cur=null;EV.msg='';EV.t=38+Math.random()*32;}
+function evEnd(){const e=EV.cur;if(!e)return;for(const k of EV_KINDS){evM[k].g.visible=false;}evM.branch.shadow.visible=false;stopBuzz();EV.cur=null;EV.msg='';EV.t=95+Math.random()*55;}   // about one hazard every 2 minutes of carrying
 const _evA=new THREE.Vector3(),_evB=new THREE.Vector3();
 
 // pick a spot on open ground: not in the gorge, not on a cliff or bridge, not in water
