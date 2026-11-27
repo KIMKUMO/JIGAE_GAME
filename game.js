@@ -95,15 +95,16 @@ const ZONES=[
 const ZONE_COLORS=[0x6e6a60,0x6f695f,0x7c6a52,0x4d6a3c,0xc4ad68,0x6b3d24,0x4a3a28,0x7b736a,0x6a5a34,0xb5652a],ZONE_TINT=[0.8,0.85,0.45,0.75,0.55,0.6,0.8,0.7,0.35,0.75];
 const PATCHES=[];
 {
-  const order=[];for(let k=0;k<3;k++)for(let t=0;t<ZONES.length;t++)order.push(t);   // 10 kinds x 3 = 30 patches
+  // most of the mountain is special ground now: big patches first, then smaller ones fill the gaps
+  const order=[];for(let k=0;k<9;k++)for(let t=0;t<ZONES.length;t++)order.push(t);   // up to 10 kinds x 9 = 90 patches
   for(let i=order.length-1;i>0;i--){const j=Math.floor(lrand()*(i+1));const tmp=order[i];order[i]=order[j];order[j]=tmp;}
-  for(let tries=0;tries<9000&&PATCHES.length<order.length;tries++){
-    const R=34+lrand()*28,x=-495+lrand()*990,z=MTN_Z0+70+lrand()*(1050-MTN_Z0-70);
-    if(Math.abs(z-canyonZ(x))<R+28||Math.abs(z-cliffZ(x))<R+14)continue;
-    if(Math.hypot(x-SUMMIT_X,z-SUMMIT_Z)<R+45)continue;
-    if(BRIDGE_XS.some(bx=>Math.hypot(x-bx,z-canyonZ(bx))<R+50)||Math.hypot(x-FORD_X,z-canyonZ(FORD_X))<R+50)continue;
-    if(Math.abs(x-FALL_X)<R+14&&z>CREEK_Z0-20&&z<CREEK_Z1+R)continue;
-    if(PATCHES.some(p=>Math.hypot(p.x-x,p.z-z)<p.R+R+12))continue;
+  for(let tries=0;tries<45000&&PATCHES.length<order.length;tries++){
+    const R=tries<22000?58+lrand()*42:30+lrand()*22,x=-500+lrand()*1000,z=MTN_Z0+35+lrand()*(1060-MTN_Z0-35);
+    if(Math.abs(z-canyonZ(x))<R+12||Math.abs(z-cliffZ(x))<R*0.85+6)continue;
+    if(Math.hypot(x-SUMMIT_X,z-SUMMIT_Z)<R+28)continue;
+    if(BRIDGE_XS.some(bx=>Math.hypot(x-bx,z-canyonZ(bx))<R+30)||Math.hypot(x-FORD_X,z-canyonZ(FORD_X))<R+34)continue;
+    if(Math.abs(x-FALL_X)<R+12&&z>CREEK_Z0-20&&z<CREEK_Z1+R)continue;
+    if(PATCHES.some(p=>Math.hypot(p.x-x,p.z-z)<(p.R+R)*0.86))continue;   // neighbours may touch a little
     const e=3,gx=(mtnShape(x+e,z)-mtnShape(x-e,z))/(2*e),gz=(mtnShape(x,z+e)-mtnShape(x,z-e))/(2*e),gl=Math.hypot(gx,gz)||1;
     PATCHES.push({x,z,R,type:order[PATCHES.length],ux:gl>1e-6?gx/gl:0,uz:gl>1e-6?gz/gl:1});
   }
@@ -112,7 +113,7 @@ const _zi={i:-1,w:0,type:-1};
 function zoneInfo(x,z,out){
   out.i=-1;out.w=0;out.type=-1;
   for(let i=0;i<PATCHES.length;i++){const p=PATCHES[i],d=Math.hypot(x-p.x,z-p.z);
-    if(d<p.R){const w=1-smoothstep(p.R*0.72,p.R,d);if(w>out.w){out.w=w;out.i=i;out.type=p.type;}}}
+    if(d<p.R){const w=1-smoothstep(p.R*0.84,p.R,d);if(w>out.w){out.w=w;out.i=i;out.type=p.type;}}}
   return out;
 }
 function zoneAt(x,z){if(!(isFinite(x)&&isFinite(z))){_zi.i=-1;_zi.w=0;_zi.type=-1;return _zi;}return zoneInfo(x,z,_zi);}
@@ -514,10 +515,10 @@ function bumpsNear(x,z){const out=[];gridEach(bumpG,x,z,b=>{out.push(b);});retur
 // signposts
 const signs=[];
 function makeSign(l1,l2,x,z,faceYaw){
-  const cv=document.createElement('canvas');cv.width=512;cv.height=256;
+  const cv=document.createElement('canvas');cv.width=256;cv.height=128;   // drawn at half size: there are many signs
   const tex=new THREE.CanvasTexture(cv);
   const fit=(g,text,size,weight,family,maxW)=>{let fs=size;do{g.font=weight+' '+fs+'px '+family;fs-=2;}while(g.measureText(text).width>maxW&&fs>16);};
-  const draw=()=>{const g=cv.getContext('2d');g.fillStyle='#6e4626';g.fillRect(0,0,512,256);
+  const draw=()=>{const g=cv.getContext('2d');g.setTransform(0.5,0,0,0.5,0,0);g.fillStyle='#6e4626';g.fillRect(0,0,512,256);
     g.strokeStyle='rgba(0,0,0,.18)';g.lineWidth=3;for(let y=18;y<256;y+=22){g.beginPath();g.moveTo(0,y+Math.sin(y)*4);g.bezierCurveTo(170,y-6,340,y+8,512,y);g.stroke();}
     g.strokeStyle='#4a2d16';g.lineWidth=14;g.strokeRect(7,7,498,242);
     g.fillStyle='#f3ecdc';g.textAlign='center';g.textBaseline='middle';
