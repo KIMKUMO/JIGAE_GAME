@@ -868,6 +868,7 @@ function update(dt){
   if(!isFinite(P.x)||!isFinite(P.z)){P.x=START_X;P.z=START_Z;}
   {const ax=(P.vx-pvx)/Math.max(dt,1e-3),az=(P.vz-pvz)/Math.max(dt,1e-3);
    P.accel=lerp(P.accel,ax*fx+az*fz,0.3);P.lat=lerp(P.lat,ax*rx+az*rz,0.3);}
+  const mx0=P.x,mz0=P.z;
   P.x+=P.vx*dt;P.z+=P.vz*dt;
   // loose ground: scree slides you down; on the steep pitch you slide back unless you keep climbing
   if(!bridgeNow&&stairNow<0){
@@ -903,6 +904,11 @@ function update(dt){
   if(brNow&&brNow.kind==='log')P.x+=fbm(clock*0.8,brNow.x)*0.8*dt*(0.6+P.speed*0.35);
   P.x=clamp(P.x,MAP.x0,MAP.x1);P.z=clamp(P.z,MAP.z0,MAP.z1);
   const prevY=P.y;
+  // at the ends of the rope and stone bridges, the gorge edge beside the deck is fenced off:
+  // you can't step off sideways into the canyon there (the single log has no such help)
+  {const ny=surfaceH(P.x,P.z,prevY);
+   if(prevY-ny>2){for(const b of BRIDGES){if(b.kind==='log')continue;const nearEnd=Math.abs(P.x-b.x)<4.5&&(Math.abs(P.z-b.z0)<5||Math.abs(P.z-b.z1)<5);
+     if(nearEnd){P.x=mx0;P.z=mz0;P.vx=0;P.vz=0;break;}}}}
   P.y=surfaceH(P.x,P.z,prevY);
   // stepping off a bridge (or any sudden drop): you land hard and the radio flies off
   if(playing&&prevY-P.y>2.5&&R.state==='carried'){B.pitch=0.9;dropRadio();toast(P.wasBridge?'다리에서 떨어졌어요!':'높은 데서 떨어졌어요!',2.4);}
@@ -960,9 +966,11 @@ function update(dt){
     // the rope bridge rolls the radio with it
     if(brNow&&brNow.kind==='rope'){fr+=brNow.ang*5+brNow.vel*0.5;fp+=Math.abs(brNow.vel)*0.08;}
     if(brNow&&brNow.kind==='log'){fr+=(P.x-brNow.x)*1.6+fbm(clock*1.6,brNow.x+3)*0.6;}   // off-centre on the log, the load leans out
-    // jerking the view: a sudden turn kicks the radio sideways; shaking it left-right keeps pumping it over
-    {const dw=P.yawVel-P.yawVelPrev;P.yawVelPrev=P.yawVel;B.rv+=clamp(-dw*0.04,-0.25,0.25);
-     if(P.shake>2.2){const ex=P.shake-2.2,dir=Math.abs(B.roll)>0.02?Math.sign(B.roll):(Math.sign(P.yawVel)||1);fr+=dir*ex*0.35;fp+=ex*0.12;}}
+    // turning the view swings the radio: it leans out of every turn, a sudden flick kicks it,
+    // and shaking the view left-right pumps it over within a second or so
+    {const dw=P.yawVel-P.yawVelPrev;P.yawVelPrev=P.yawVel;B.rv+=clamp(-dw*0.07,-0.45,0.45);
+     fr+=clamp(P.yawVel*0.1,-0.4,0.4);
+     if(P.shake>1.6){const ex=P.shake-1.6,dir=Math.abs(B.roll)>0.02?Math.sign(B.roll):(Math.sign(P.yawVel)||1);fr+=dir*ex*0.75;fp+=ex*0.18;}}
     for(const b of bumpsNear(P.x,P.z)){b.cd=Math.max(0,b.cd-dt);if(b.cd>0)continue;const dx=b.x-P.x,dz=b.z-P.z;if(dx*dx+dz*dz<0.55&&sp>0.4){b.cd=1.5;const sev=lerp(0.55,1.05,clamp(P.y/SUMMIT_H,0,1));B.pv+=(0.75+Math.random()*0.5)*sev*(sp/4.4);B.rv+=(Math.random()-.5)*1.4*sev*(sp/4.4);hips.position.y=1.02;}}
     B.pv=pv0+(B.pv-pv0)*0.7;   // bumps, steps and logs tip the radio back 30% less
     if(P.grace>0){P.grace-=dt;fp*=0.35;fr*=0.35;}
@@ -1062,7 +1070,7 @@ function updateHUD(){
   const lbl=$('gaugeLbl');
   let msg='',warn=false;
   if(R.state==='carried'&&game==='play'){
-    if(P.shake>2.2){warn=true;msg='화면을 흔들지 마세요!';}
+    if(P.shake>1.6){warn=true;msg='화면을 흔들지 마세요!';}
     else if(P.zone===Z_WIND&&WIND.on>0&&WIND.str>0.5){warn=true;const wr=WIND.x*(-Math.cos(P.yaw))+WIND.z*Math.sin(P.yaw);msg=wr>0?'돌풍! 오른쪽으로 밀려요 Q':'돌풍! 왼쪽으로 밀려요 E';}
     else if(danger){warn=true;msg=B.pitch>Math.abs(B.roll)?'뒤로 넘어가요! Space':(B.roll>0?'오른쪽으로 쏠려요! Q':'왼쪽으로 쏠려요! E');}
   }else if(R.state!=='carried'&&R.state!=='pickup'){msg='라디오를 주우세요';warn=true;}
