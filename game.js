@@ -397,18 +397,20 @@ function keepClear(x,z){ // places where nothing should grow
 }
 {
   const pines=[],leafy=[],rocks=[],grass=[];
-  const keep=[0.4,0.15,0.3,0.45,0.08,1.0,0.06,0.12,0.55,0.75];       // trees kept per kind of patch
-  for(let k=0;k<70000&&(pines.length+leafy.length)<8000;k++){
+  // a tall, tightly packed forest everywhere; special patches keep their own (thinner) cover
+  const keep=[0.35,0.12,0.3,0.4,0.06,1.0,0.05,0.1,0.55,0.9];
+  for(let k=0;k<260000&&(pines.length+leafy.length)<26000;k++){
     const x=X0+20+rand()*(X1-X0-40),z=Z0+20+rand()*(Z1-Z0-40);
     if(keepClear(x,z))continue;
-    const zi=zoneInfo(x,z,_zi),fog=(zi.type===Z_FOG||zi.type===Z_LEAF)&&zi.w>0.3;
-    if(rand()>lerp(0.42,zi.type>=0?keep[zi.type]:0.42,zi.w))continue;
-    if(!fog&&vnoise(x/34+7,z/34+3)<0.3)continue;
-    if(nearStairs(x,z,3.2)||nearBlocker(x,z,fog?1.15:1.6))continue;
+    const zi=zoneInfo(x,z,_zi),maple=(zi.type===Z_FOG||zi.type===Z_LEAF)&&zi.w>0.3;
+    if(rand()>lerp(1,zi.type>=0?keep[zi.type]:1,zi.w))continue;
+    if(vnoise(x/40+7,z/40+3)<0.12)continue;                     // only a few small glades
+    if(nearStairs(x,z,3.2)||nearBlocker(x,z,2.0))continue;       // trunks ~2.3 m apart: tight, but you can squeeze through
     const y=groundH(x,z);if(slopeAt(x,z)>1.3)continue;
-    const s=(0.75+rand()*0.75)*(y>H*0.85?0.7:1);
-    if(fog?rand()<0.12:rand()<(y>H*0.5?0.75:0.45))pines.push({x,y,z,s,rot:rand()*6.28});else leafy.push({x,y,z,s,rot:rand()*6.28,maple:fog});
-    gridAdd(blockG,x,z,{x,z,r:0.22*s+0.08});
+    const tall=lerp(1,0.55,smoothstep(H*0.78,H*0.97,y))*(0.8+rand()*0.45);   // a little shorter up near the summit
+    const t={x,y,z,rot:rand()*6.28,g:0.75+rand()*0.5,tall,maple};
+    if(maple?rand()<0.1:rand()<lerp(0.5,0.8,smoothstep(0,H*0.7,y)))pines.push(t);else leafy.push(t);
+    gridAdd(blockG,x,z,{x,z,r:0.3*t.g+0.06});
   }
   for(let k=0;k<6000&&rocks.length<1800;k++){const x=X0+20+rand()*(X1-X0-40),z=Z0+20+rand()*(Z1-Z0-40);
     if(keepClear(x,z)||nearStairs(x,z,2.5))continue;
@@ -420,17 +422,19 @@ function keepClear(x,z){ // places where nothing should grow
     const zi=zoneInfo(x,z,_zi);if(zi.type!==Z_WIND||rand()>zi.w)continue;
     const n=4+Math.floor(rand()*4),s=0.8+rand()*0.6;
     for(let b=0;b<n;b++){const ang=rand()*6.28;grass.push({x:x+Math.cos(ang)*0.12,y:groundH(x,z),z:z+Math.sin(ang)*0.12,s:s*(0.8+rand()*0.4),rot:ang,lean:0.12+rand()*0.22});}}
-  const trunkG=new THREE.CylinderGeometry(0.14,0.22,1,5);trunkG.translate(0,0.5,0);
-  const pineLo=new THREE.ConeGeometry(1.5,2.6,7);pineLo.translate(0,2.3,0);
-  const pineHi=new THREE.ConeGeometry(1.05,2.1,7);pineHi.translate(0,3.6,0);
-  const leafG=new THREE.IcosahedronGeometry(1.55,0);leafG.translate(0,2.6,0);
-  const all=pines.concat(leafy);
-  instMesh(trunkG,lam(0xffffff),all,(t,d,c)=>{d.position.set(t.x,t.y-0.1,t.z);d.rotation.set(0,t.rot,0);d.scale.set(t.s,t.s*1.9,t.s);c.setHex(0x5e4026);});
-  const pinePal=[0x2f5a37,0x3a6a3c,0x2a4d33,0x46703f];
-  instMesh(pineLo,lam(0xffffff),pines,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(0,t.rot,0);d.scale.setScalar(t.s);c.setHex(pinePal[(t.rot*10|0)%4]);});
-  instMesh(pineHi,lam(0xffffff),pines,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(0,t.rot,0);d.scale.setScalar(t.s);c.setHex(pinePal[(t.rot*10+1|0)%4]);});
+  // tall conifers (bare trunk below, a long narrow crown above head height) and tall broadleaf trees
+  const trunkG=new THREE.CylinderGeometry(0.62,1,1,6);trunkG.translate(0,0.5,0);
+  const coneG=new THREE.ConeGeometry(1,1,7);coneG.translate(0,0.5,0);
+  const leafG=new THREE.IcosahedronGeometry(1,0);
+  for(const t of pines){t.h=13*t.tall;t.cr=2.3*t.g*Math.sqrt(t.tall);}
+  for(const t of leafy){t.h=9*t.tall;t.cr=3.0*t.g*Math.sqrt(t.tall);}
+  const all=pines.concat(leafy),barks=[0x5e4026,0x4f3520,0x6a4a2e,0x57412c];
+  instMesh(trunkG,lam(0xffffff),all,(t,d,c)=>{d.position.set(t.x,t.y-0.3,t.z);d.rotation.set(0,t.rot,0);d.scale.set(0.3*t.g,t.h+0.3,0.3*t.g);c.setHex(barks[(t.rot*7|0)%4]);});
+  const pinePal=[0x2f5a37,0x3a6a3c,0x2a4d33,0x46703f,0x25472f];
+  instMesh(coneG,lam(0xffffff),pines,(t,d,c)=>{d.position.set(t.x,t.y+t.h*0.4,t.z);d.rotation.set(0,t.rot,0);d.scale.set(t.cr,t.h*0.48,t.cr);c.setHex(pinePal[(t.rot*10|0)%5]);});
+  instMesh(coneG,lam(0xffffff),pines,(t,d,c)=>{d.position.set(t.x,t.y+t.h*0.66,t.z);d.rotation.set(0,t.rot+0.5,0);d.scale.set(t.cr*0.72,t.h*0.48,t.cr*0.72);c.setHex(pinePal[(t.rot*10+1|0)%5]);});
   const autumn=[0xc8452b,0xe07a2e,0xe8b43a,0xb5392a,0xd8962f,0x9a8a3c],maple=[0xd2361f,0xe0521e,0xb8281c,0xe8862a];
-  instMesh(leafG,lam(0xffffff),leafy,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(t.rot,t.rot*2,0);d.scale.set(t.s,t.s*1.1,t.s);c.setHex(t.maple?maple[(t.rot*13|0)%4]:autumn[(t.rot*13|0)%autumn.length]);});
+  instMesh(leafG,lam(0xffffff),leafy,(t,d,c)=>{d.position.set(t.x,t.y+t.h*0.82+t.cr*0.5,t.z);d.rotation.set(t.rot,t.rot*2,0);d.scale.set(t.cr,t.cr*1.25,t.cr);c.setHex(t.maple?maple[(t.rot*13|0)%4]:autumn[(t.rot*13|0)%autumn.length]);});
   instMesh(new THREE.DodecahedronGeometry(0.6,0),lam(0xffffff),rocks,(t,d,c)=>{d.position.set(t.x,t.y,t.z);d.rotation.set(t.rot,t.rot*1.7,t.rot*.5);d.scale.set(t.s,t.s*(t.moss?0.55:0.7),t.s*1.1);if(t.moss)c.setRGB(0.36,0.46,0.3);else c.setRGB(0.5+Math.min(t.s,2)*0.04,0.48+Math.min(t.s,2)*0.03,0.44);});
   const grassG=new THREE.ConeGeometry(0.05,1.25,3);grassG.translate(0,0.62,0);
   const plumeG=new THREE.ConeGeometry(0.045,0.45,4);plumeG.translate(0,1.42,0);
