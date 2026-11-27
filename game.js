@@ -683,6 +683,7 @@ function reset(){
   P.y=surfaceH(P.x,P.z);
   B.pitch=0;B.roll=0;B.pv=0;B.rv=0;
   attachRadio();elapsed=0;drops=0;$('drops').textContent='0';
+  if(typeof evEnd==='function'&&EV){evEnd();EV.t=28;EV.last=-1;}
 }
 function attachRadio(){radioPivot.add(radio);radio.position.set(0,0,0);radio.rotation.set(0,0,0);R.state='carried';R.squash=0;radioSquash.scale.set(1,1,1);marker.visible=false;}
 function syncHolder(){
@@ -839,6 +840,211 @@ function updatePickup(dt){
 const WIND={t:2+Math.random()*3,on:0,dur:0,dir:0,str:0,x:0,z:0};
 const _dh={x:0,z:0};
 let fogMix=0;
+// ---------------------------------------------------------------- one-off hazards
+// Every so often, while you carry the radio, one thing happens once: a magpie dives at the radio,
+// a boar charges, a wasp swarm gives chase, a branch snaps overhead, or a snake lies in your way.
+// Each is announced (sound, message and direction arrow) a moment before it strikes, each can be
+// dodged, and when it is over it is gone: nothing keeps bothering you.
+const EV={t:28,cur:null,last:-1,n:0,buzz:null};
+const EV_NAMES={magpie:'까치',boar:'멧돼지',wasps:'말벌 떼',branch:'부러진 가지',snake:'뱀'};
+const EV_KINDS=Object.keys(EV_NAMES);
+const evRoot=new THREE.Group();scene.add(evRoot);
+const evM={};
+{
+  // magpie (drawn a bit larger than life so it reads at a distance)
+  const g=new THREE.Group(),black=lam(0x16181d),white=lam(0xecebe4),blue=lam(0x2a4470);
+  const body=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,6),black);body.scale.set(1,0.9,1.7);g.add(body);
+  const belly=new THREE.Mesh(new THREE.SphereGeometry(0.15,8,6),white);belly.scale.set(1.05,0.8,1.2);belly.position.set(0,-0.05,0);g.add(belly);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.11,8,6),black);head.position.set(0,0.08,0.3);g.add(head);
+  const beak=new THREE.Mesh(new THREE.ConeGeometry(0.035,0.13,5),black);beak.rotation.x=Math.PI/2;beak.position.set(0,0.07,0.44);g.add(beak);
+  const tail=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.02,0.55),blue);tail.position.set(0,0.03,-0.5);g.add(tail);
+  const wg1=new THREE.BoxGeometry(0.6,0.02,0.26);wg1.translate(0.3,0,0);const wg2=wg1.clone();wg2.translate(-0.6,0,0);
+  const wl=new THREE.Mesh(wg1,black),wr=new THREE.Mesh(wg2,black);g.add(wl,wr);
+  const tip1=new THREE.Mesh(new THREE.BoxGeometry(0.22,0.025,0.2),white);tip1.position.set(0.42,0,0);wl.add(tip1);
+  const tip2=tip1.clone();tip2.position.set(-0.42,0,0);wr.add(tip2);
+  g.scale.setScalar(1.7);g.visible=false;evRoot.add(g);evM.magpie={g,wl,wr};
+}
+{
+  // boar
+  const g=new THREE.Group(),fur=lam(0x3f3226),dark=lam(0x241b14),tusk=lam(0xf1ead8),snout=lam(0x6b4a3a);
+  const body=new THREE.Mesh(new THREE.BoxGeometry(0.72,0.72,1.45),fur);body.position.y=0.78;g.add(body);
+  const ridge=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.16,1.2),dark);ridge.position.set(0,1.18,0.05);g.add(ridge);
+  const head=new THREE.Group();head.position.set(0,0.78,0.78);g.add(head);
+  const skull=new THREE.Mesh(new THREE.BoxGeometry(0.52,0.5,0.55),fur);skull.position.set(0,0,0.2);head.add(skull);
+  const nose=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.15,0.3,8),snout);nose.rotation.x=Math.PI/2;nose.position.set(0,-0.1,0.58);head.add(nose);
+  for(const s of [-1,1]){const t=new THREE.Mesh(new THREE.ConeGeometry(0.035,0.2,5),tusk);t.position.set(s*0.15,-0.12,0.6);t.rotation.set(-0.6,0,s*0.5);head.add(t);
+    const e=new THREE.Mesh(new THREE.ConeGeometry(0.08,0.2,4),dark);e.position.set(s*0.2,0.3,0.05);head.add(e);}
+  const legs=[];for(const [lx,lz] of [[-0.24,0.5],[0.24,0.5],[-0.24,-0.5],[0.24,-0.5]]){const p=new THREE.Group();p.position.set(lx,0.5,lz);const l=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.5,0.16),dark);l.position.y=-0.25;p.add(l);g.add(p);legs.push(p);}
+  g.traverse(o=>{if(o.isMesh)o.castShadow=true;});g.scale.setScalar(1.15);g.visible=false;evRoot.add(g);evM.boar={g,head,legs};
+}
+{
+  // wasp swarm: a cloud of little striped bodies
+  const g=new THREE.Group(),y=lam(0xf0b81e),k=lam(0x1a1408),geo=new THREE.SphereGeometry(0.05,5,4);geo.scale(1,1,1.8);
+  const bees=[];for(let i=0;i<22;i++){const m=new THREE.Mesh(geo,i%3?y:k);g.add(m);bees.push({m,a:Math.random()*6.3,b:Math.random()*6.3,r:0.3+Math.random()*0.6,s:3+Math.random()*4});}
+  g.visible=false;evRoot.add(g);evM.wasps={g,bees};
+}
+{
+  // a heavy branch with leaves, and its shadow on the ground
+  const g=new THREE.Group(),bark=lam(0x4d3826),leaf=lam(0x6f7d34);
+  const main=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.17,4.2,7),bark);main.rotation.z=Math.PI/2;g.add(main);
+  for(const [x,a,l] of [[-1.1,0.7,1.4],[0.3,-0.8,1.6],[1.3,0.6,1.1]]){const t=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.07,l,5),bark);t.position.set(x,0,0);t.rotation.set(0,a,Math.PI/2-0.9);t.translateY(l/2);g.add(t);
+    const c=new THREE.Mesh(new THREE.IcosahedronGeometry(0.55,0),leaf);c.position.copy(t.position).add(new THREE.Vector3(Math.cos(a)*0.2,0.5,-Math.sin(a)*l*0.5));g.add(c);}
+  g.traverse(o=>{if(o.isMesh)o.castShadow=true;});
+  const sg=new THREE.CircleGeometry(1,24);sg.rotateX(-Math.PI/2);
+  const shadow=new THREE.Mesh(sg,new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0,depthWrite:false}));shadow.renderOrder=2;
+  g.visible=false;shadow.visible=false;evRoot.add(g,shadow);evM.branch={g,shadow};
+}
+{
+  // snake: a chain of beads that slithers
+  const g=new THREE.Group(),c1=lam(0x2e2618),c2=lam(0xc29a2a),segs=[];
+  for(let i=0;i<24;i++){const r=i===0?0.1:0.088*(1-i/30);const m=new THREE.Mesh(new THREE.SphereGeometry(r,7,5),i%3===1?c2:c1);m.scale.set(1,0.7,1.5);g.add(m);segs.push(m);}
+  const eye=lam(0xd8c21a);for(const s of [-1,1]){const e=new THREE.Mesh(new THREE.SphereGeometry(0.018,5,4),eye);e.position.set(s*0.05,0.04,0.04);segs[0].add(e);}
+  g.visible=false;evRoot.add(g);evM.snake={g,segs};
+}
+
+// sounds
+function evOsc(type,f0,f1,t,dur,vol,filt){const o=AC.createOscillator(),g=AC.createGain(),f=AC.createBiquadFilter();o.type=type;o.frequency.setValueAtTime(f0,t);o.frequency.exponentialRampToValueAtTime(f1,t+dur);
+  f.type='bandpass';f.frequency.value=filt;f.Q.value=1.4;g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);o.connect(f);f.connect(g);g.connect(master);o.start(t);o.stop(t+dur+0.05);}
+function playCaw(){if(!AC)return;const t=AC.currentTime;for(let i=0;i<3;i++){evOsc('sawtooth',1250,780,t+i*0.2,0.15,0.22,1500);}}
+function playGrunt(){if(!AC)return;const t=AC.currentTime;evOsc('sawtooth',95,62,t,0.35,0.45,320);evOsc('sawtooth',90,58,t+0.42,0.3,0.4,300);playNoise(t,0.3,0.22,260);}
+function playHiss(){if(!AC)return;const t=AC.currentTime;playNoise(t,1.0,0.32,5200);playNoise(t+0.1,0.9,0.22,7500);}
+function playCrack(){if(!AC)return;const t=AC.currentTime;for(let i=0;i<6;i++)playNoise(t+i*0.06+Math.random()*0.03,0.05,0.55,2200+Math.random()*1500);playNoise(t+0.38,0.35,0.4,700);}
+function startBuzz(){if(!AC||EV.buzz)return;const g=AC.createGain(),f=AC.createBiquadFilter();f.type='bandpass';f.frequency.value=650;f.Q.value=2;g.gain.value=0;
+  const o1=AC.createOscillator(),o2=AC.createOscillator(),lfo=AC.createOscillator(),lg=AC.createGain();o1.type='sawtooth';o2.type='sawtooth';o1.frequency.value=212;o2.frequency.value=227;lfo.frequency.value=23;lg.gain.value=18;
+  lfo.connect(lg);lg.connect(o1.frequency);lg.connect(o2.frequency);o1.connect(f);o2.connect(f);f.connect(g);g.connect(master);o1.start();o2.start();lfo.start();EV.buzz={g,o:[o1,o2,lfo]};}
+function stopBuzz(){if(!EV.buzz)return;const b=EV.buzz;EV.buzz=null;try{b.g.gain.setTargetAtTime(0,AC.currentTime,0.08);b.o.forEach(o=>o.stop(AC.currentTime+0.5));}catch(e){}}
+
+// the warning line under the message, with an arrow pointing at the threat
+const alertEl=$('alert');
+function evAlert(msg){EV.msg=msg;}
+function evArrow(x,z){camera.getWorldDirection(projV);let a=Math.atan2(x-P.x,z-P.z)-Math.atan2(projV.x,projV.z);a=Math.atan2(Math.sin(a),Math.cos(a));
+  const d=Math.abs(a);return d<0.45?'↑':d>2.6?'↓':a>0?(d<1.4?'↖':'←'):(d<1.4?'↗':'→');}
+function evEnd(){const e=EV.cur;if(!e)return;for(const k of EV_KINDS){evM[k].g.visible=false;}evM.branch.shadow.visible=false;stopBuzz();EV.cur=null;EV.msg='';EV.t=38+Math.random()*32;}
+const _evA=new THREE.Vector3(),_evB=new THREE.Vector3();
+
+// pick a spot on open ground: not in the gorge, not on a cliff or bridge, not in water
+function evGroundOK(x,z){return x>MAP.x0+5&&x<MAP.x1-5&&z>MAP.z0+5&&z<MAP.z1-5&&Math.abs(z-canyonZ(x))>CAN.floorHW+16&&!isCliffFeature(x,z)&&!bridgeAt(x,z)&&!inWater(x,z,groundH(x,z)+0.5);}
+function evStart(kind,fx,fz,rx,rz){
+  const mvx=P.speed>0.5?P.vx/P.speed:fx,mvz=P.speed>0.5?P.vz/P.speed:fz;   // where you are heading
+  const e={kind,t:0,phase:'warn',hit:false};
+  if(kind==='magpie'){
+    const side=Math.random()<0.5?-1:1;e.side=side;e.x=P.x+rx*side*26+fx*8;e.z=P.z+rz*side*26+fz*8;e.y=P.y+13;e.vx=0;e.vy=0;e.vz=0;
+    playCaw();toast('까치가 라디오를 노려요!',2.2);evAlert('까치! 쳐다보면 달아나요 · 아니면 부딪히기 직전 '+(side>0?'E':'Q'));   // a bird from the right knocks the radio left: lean right (E)
+  }else if(kind==='boar'){
+    let ok=false;for(const side of (Math.random()<0.5?[-1,1]:[1,-1])){const x=P.x+rx*side*23+mvx*5,z=P.z+rz*side*23+mvz*5;if(evGroundOK(x,z)&&groundH(x,z)-P.y<14){e.x=x;e.z=z;ok=true;break;}}
+    if(!ok)return false;
+    e.dx=P.x-e.x;e.dz=P.z-e.z;const l=Math.hypot(e.dx,e.dz);e.dx/=l;e.dz/=l;e.run=0;
+    playGrunt();toast('멧돼지가 노려봐요!',2.2);evAlert('멧돼지가 곧 돌진해요 · 앞뒤로 비켜서세요');
+  }else if(kind==='wasps'){
+    const s=(Math.random()-0.5)*6;e.x=P.x+mvx*6.5+rx*s;e.z=P.z+mvz*6.5+rz*s;e.y=groundH(e.x,e.z)+2.6;
+    startBuzz();playCrunch();toast('말벌집을 건드렸어요!',2.2);evAlert('말벌 떼! 달려서(Shift) 따돌리세요');
+  }else if(kind==='branch'){
+    const lead=1.6;e.x=P.x+P.vx*lead;e.z=P.z+P.vz*lead;if(!evGroundOK(e.x,e.z)){e.x=P.x;e.z=P.z;}
+    e.gy=groundH(e.x,e.z);e.rot=Math.random()*6.3;playCrack();toast('머리 위에서 우지끈!',2);evAlert('가지가 떨어져요! 그림자 밖으로');
+  }else if(kind==='snake'){
+    const x=P.x+mvx*6,z=P.z+mvz*6;if(!evGroundOK(x,z)||stepAt(x,z)>=0)return false;
+    e.x=x;e.z=z;e.h=Math.atan2(-mvx,-mvz)+(Math.random()-0.5)*0.6;   // lies across your way, slowly crossing it
+    playHiss();toast('발밑에 뱀이 있어요!',2.2);evAlert('뱀! 가까이 가지 말고 돌아가세요');
+  }
+  EV.cur=e;EV.last=kind;EV.n++;return true;
+}
+function updateEvents(dt,playing,fx,fz,rx,rz,brNow,wet,zt){
+  const e=EV.cur;
+  if(!e){
+    // count down only while you're carrying the radio on ordinary footing
+    if(!playing||R.state!=='carried'||P.grace>0)return;
+    EV.t-=dt;if(EV.t>0)return;
+    if(brNow||wet||P.stair>=0||zt===Z_ROCKFALL||Math.abs(P.z-canyonZ(P.x))<CAN.floorHW+22||Math.hypot(P.x-SUMMIT_X,P.z-SUMMIT_Z)<45){EV.t=4;return;}
+    const pool=EV_KINDS.filter(k=>k!==EV.last);
+    for(let tries=0;tries<4;tries++){if(evStart(pool[Math.floor(Math.random()*pool.length)],fx,fz,rx,rz))return;}
+    EV.t=5;return;
+  }
+  e.t+=dt;
+  if(!playing){evEnd();return;}
+  const carried=R.state==='carried';
+  if(e.kind==='magpie'){
+    const m=evM.magpie;m.g.visible=true;const flap=Math.sin(clock*(e.phase==='dive'?9:16))*0.8;m.wl.rotation.z=flap;m.wr.rotation.z=-flap;
+    radio.getWorldPosition(_evA);
+    if(e.phase==='warn'){e.x+=Math.cos(clock*2)*dt*4;e.z+=Math.sin(clock*2)*dt*4;if(e.t>1.6){e.phase='dive';if(AC)playCaw();}}
+    else if(e.phase==='dive'){
+      _evB.set(_evA.x-e.x,_evA.y-e.y,_evA.z-e.z);const d=_evB.length();_evB.multiplyScalar(1/Math.max(d,1e-3));
+      e.vx=_evB.x*15;e.vy=_evB.y*15;e.vz=_evB.z*15;
+      // look it in the eye and it sheers off (turning to face it swings the radio, though)
+      camera.getWorldDirection(projV);_evB.set(e.x-camera.position.x,e.y-camera.position.y,e.z-camera.position.z).normalize();
+      if(d<20&&d>3&&projV.dot(_evB)>0.9){e.phase='leave';e.vy=9;e.vx*=-0.4;e.vz*=-0.4;toast('까치가 놀라 달아났어요',1.6);EV.msg='';}
+      else if(d<0.7||e.t>9){e.phase='leave';EV.msg='';
+        if(carried&&d<0.7){const push=Math.sign(e.vx*rx+e.vz*rz)||e.side*-1,resist=clamp(-P.side*push,0,1);   // hold Q/E against the hit
+          B.rv+=push*3.0*(1-0.7*resist);B.pv+=0.3;playThud(2.5);playCaw();toast('까치가 라디오를 쪼았어요!',1.8);}
+        e.vy=8;}
+    }else{e.vy-=dt*2;if(e.t>12||e.y-P.y>40)evEnd();}
+    if(e.phase!=='warn'){e.x+=e.vx*dt;e.y+=e.vy*dt;e.z+=e.vz*dt;}else e.y=lerp(e.y,P.y+13,dt);
+    if(!EV.cur)return;
+    m.g.position.set(e.x,e.y,e.z);const hv=Math.hypot(e.vx,e.vz);m.g.rotation.set(-Math.atan2(e.vy,Math.max(hv,0.1))*0.8,e.phase==='warn'?clock*2+Math.PI/2:Math.atan2(e.vx,e.vz),0);
+    if(EV.msg)EV.arrow=evArrow(e.x,e.z);
+  }else if(e.kind==='boar'){
+    const m=evM.boar;m.g.visible=true;
+    if(e.phase==='warn'){
+      // pawing the ground, head low
+      m.legs[0].rotation.x=Math.max(0,Math.sin(e.t*9))*-0.9;m.head.rotation.x=0.25+Math.sin(e.t*4)*0.08;
+      if(e.t>1.0&&!e.g2){e.g2=true;playGrunt();}
+      if(e.t>2.1){e.phase='charge';e.dx=P.x-e.x;e.dz=P.z-e.z;const l=Math.hypot(e.dx,e.dz)||1;e.dx/=l;e.dz/=l;playRumble();playGrunt();EV.msg='멧돼지 돌진!';}
+    }else{
+      const v=e.phase==='charge'?10.5:7;e.x+=e.dx*v*dt;e.z+=e.dz*v*dt;e.run+=v*dt;
+      const a=e.t*18;m.legs.forEach((l,i)=>l.rotation.x=Math.sin(a+(i%2?0:Math.PI)+(i>1?1.2:0))*0.8);m.head.rotation.x=0.35;
+      if(!e.hit&&Math.hypot(e.x-P.x,e.z-P.z)<1.25&&Math.abs(groundH(e.x,e.z)-P.y)<1.5){e.hit=true;EV.msg='';
+        P.vx+=e.dx*6;P.vz+=e.dz*6;P.busy=0.6;playThud(5);playGrunt();
+        if(carried){B.pitch=0.25;B.roll=0.95*(Math.sign(e.dx*rx+e.dz*rz)||1);dropRadio();toast('멧돼지에 받혔어요!',2.2);}}
+      if(e.run>16&&!e.hit&&EV.msg){EV.msg='';toast('멧돼지를 피했어요',1.4);}
+      if(e.run>55||e.t>9||isCliffFeature(e.x,e.z)&&e.run>20){evEnd();return;}
+    }
+    m.g.position.set(e.x,groundH(e.x,e.z)+(e.phase==='charge'?Math.abs(Math.sin(e.t*18))*0.12:0),e.z);m.g.rotation.y=Math.atan2(e.dx,e.dz);
+    if(EV.msg)EV.arrow=evArrow(e.x,e.z);
+  }else if(e.kind==='wasps'){
+    const m=evM.wasps;m.g.visible=true;
+    const tx=P.x,ty=P.y+1.7,tz=P.z,dx=tx-e.x,dy=ty-e.y,dz=tz-e.z,d=Math.hypot(dx,dy,dz);
+    if(e.phase==='warn'){if(e.t>0.9)e.phase='chase';}
+    else if(e.phase==='chase'){const v=5.7;e.x+=dx/d*v*dt;e.y+=dy/d*v*dt;e.z+=dz/d*v*dt;
+      if(d<1.1){e.phase='leave';e.t=0;EV.msg='';P.busy=0.4;playCrunch();
+        if(carried){const s=Math.random()<0.5?-1:1;B.rv+=s*2.5;B.pv+=0.8;toast('벌에 쏘였어요! 움찔!',1.8);}}
+      else if(e.t>5.5){e.phase='leave';e.t=0;EV.msg='';toast('말벌을 따돌렸어요',1.4);}}
+    else{e.y+=dt*1.5;if(e.t>1.4){evEnd();return;}}
+    const sc=e.phase==='warn'?e.t/0.9:e.phase==='leave'?1-e.t/1.4:1;
+    m.g.position.set(e.x,e.y,e.z);m.g.scale.setScalar(Math.max(0.05,sc));
+    for(const b of m.bees){b.a+=dt*b.s;b.b+=dt*b.s*0.7;b.m.position.set(Math.cos(b.a)*b.r,Math.sin(b.b)*b.r*0.6,Math.sin(b.a)*b.r);b.m.rotation.y=b.a+1.57;}
+    if(EV.buzz&&AC)EV.buzz.g.gain.setTargetAtTime((muted?0:0.2)*clamp(1-d/30,0.1,1)*Math.max(0.05,sc),AC.currentTime,0.05);
+    if(EV.msg)EV.arrow=evArrow(e.x,e.z);
+  }else if(e.kind==='branch'){
+    const m=evM.branch,T=2.0,R0=1.75;m.g.visible=true;m.shadow.visible=e.phase!=='down';
+    if(e.phase==='warn'){
+      const h=e.t<0.6?13+Math.sin(e.t*40)*0.1:Math.max(0,13-0.5*(13*2/((T-0.6)*(T-0.6)))*(e.t-0.6)*(e.t-0.6));
+      m.g.position.set(e.x,e.gy+0.2+h,e.z);m.g.rotation.set(e.t<0.6?Math.sin(e.t*30)*0.05:(e.t-0.6)*0.8,e.rot,0);
+      m.shadow.position.set(e.x,e.gy+0.12,e.z);m.shadow.scale.setScalar(R0*(0.6+0.4*Math.min(1,e.t/T)));m.shadow.material.opacity=0.55*Math.min(1,e.t/0.8);
+      if(e.t>=T){e.phase='down';e.t=0;EV.msg='';playThud(6);playCrunch();m.g.position.y=e.gy+0.18;m.g.rotation.x=0;
+        const d=Math.hypot(P.x-e.x,P.z-e.z);
+        if(carried&&d<R0){B.pitch=0.9;dropRadio();toast('떨어진 가지에 맞았어요!',2.2);P.busy=0.4;}
+        else if(carried&&d<R0+1.4){B.pv+=0.7;B.rv+=(Math.random()-.5)*1.4;toast('아슬아슬하게 피했어요',1.4);}
+        else toast('가지를 피했어요',1.2);}
+    }else{if(e.t>9){m.g.position.y-=dt*0.6;}if(e.t>11){evEnd();return;}}
+    if(EV.msg)EV.arrow=evArrow(e.x,e.z);
+  }else if(e.kind==='snake'){
+    const m=evM.snake;m.g.visible=true;const d=Math.hypot(P.x-e.x,P.z-e.z);
+    const spd=e.phase==='leave'?2.2:0.25;e.x+=Math.cos(e.h)*spd*dt;e.z-=Math.sin(e.h)*spd*dt;
+    if(e.phase==='warn'){
+      if(d<2.1){e.phase='leave';e.t=0;EV.msg='';playHiss();
+        // you jump back from it: the radio tips hard backwards (Space to catch it)
+        const ax=(P.x-e.x)/(d||1),az=(P.z-e.z)/(d||1);P.vx=ax*3.2;P.vz=az*3.2;P.busy=0.45;
+        if(carried){B.pv+=1.5*(1-0.55*P.lean);B.rv+=(Math.random()-.5)*0.6;toast('뱀에 놀라 뒷걸음질!',1.8);}}
+      else if(e.t>16||d>40){evEnd();return;}
+      else if(d>9&&e.t>4&&EV.msg){EV.msg='';}
+    }else if(e.t>2.5){evEnd();return;}
+    // slither: each bead follows a sine wave along the body
+    const ch=Math.cos(e.h),sh=-Math.sin(e.h);
+    m.segs.forEach((s,i)=>{const back=i*0.08,w=Math.sin(clock*(e.phase==='leave'?14:5)-i*0.7)*0.12*Math.min(1,i/3);
+      const x=e.x-ch*back-sh*w,z=e.z-sh*back+ch*w;s.position.set(x,groundH(x,z)+0.06+(i===0&&e.phase==='warn'?0.12+Math.sin(clock*3)*0.03:0),z);s.rotation.y=Math.atan2(ch,sh);});
+    if(EV.msg)EV.arrow=evArrow(e.x,e.z);
+  }
+}
+
 function update(dt){
   if(!(dt>0))return;
   clock+=dt;
@@ -924,6 +1130,8 @@ function update(dt){
     if(r.life<=0||r.x<MAP.x0||r.x>MAP.x1||r.z<MAP.z0||r.z>MAP.z1){r.on=false;r.m.visible=false;continue;}
     if(!r.hit&&playing&&Math.hypot(r.x-P.x,r.z-P.z)<1.3&&Math.abs(ry-P.y-1)<2.2){r.hit=true;P.vx+=r.vx*0.5;P.vz+=r.vz*0.5;playThud(4);
       if(R.state==='carried'){B.pitch=0.9;dropRadio();toast('굴러온 돌에 맞았어요!',2);}RF.t=Math.max(RF.t,4);}}
+  // one-off hazards (magpie, boar, wasps, branch, snake)
+  updateEvents(dt,playing,fx,fz,rx,rz,brNow,wet,zt);
   // wind gusts on the ridges also shove you a little
   if(zt===Z_WIND&&WIND.on>0){P.x+=WIND.x*0.5*zw*dt;P.z+=WIND.z*0.5*zw*dt;}
   // trees and big rocks block the way
@@ -1124,6 +1332,8 @@ function updateHUD(){
   // radio lcd
   let mode=R.state==='carried'||R.state==='pickup'?(danger?'weak':'ok'):'off';
   if(mode!==lcdMode){lcdMode=mode;lcd.textContent=mode==='ok'?'FM 98.1 ♪ 소리봉 방송':mode==='weak'?'FM 98.1 ~ 지지직…':'-- 신호 약함 --';lcd.classList.toggle('off',mode==='off');}
+  // hazard warning with an arrow toward it
+  {const on=game==='play'&&!!EV.msg;if(alertEl.hidden===on)alertEl.hidden=!on;if(on){const tx=(EV.arrow||'!')+' '+EV.msg;if(alertEl.textContent!==tx)alertEl.textContent=tx;}}
   // pickup prompt + marker
   $('prompt').hidden=!canPickup();
   const mk=$('marker');
@@ -1177,5 +1387,5 @@ document.body.classList.add('title');
 reset();
 requestAnimationFrame(frame);
 window.__game={P,B,R,WIND,LAYOUT_SEED,get state(){return game;},get fog(){return fogMix;},keys,dropRadio,tryPickup,groundH,slopeAt,surfaceH,stepAt,zoneAt,onBridge,bridgeAt,bridgeDeck,deckAt,bridgeCenterX,blockG,gridEach,inWater,canyonZ,canyonFloor,cliffZ,CLIFF,BRIDGES,FORD_X,FALL_X,PATCHES,STEPS,STAIR_STARTS,ZONES,ROCKS,LOGS,HOLES,isCliffFeature,SUMMIT_X,SUMMIT_Z,SUMMIT_H,START_SLOTS,
-  step(n,dt,quiet){for(let i=0;i<n;i++)update(dt);if(!quiet){updateHUD();renderer.render(scene,camera);}},start:startGame};
+  step(n,dt,quiet){for(let i=0;i<n;i++)update(dt);if(!quiet){updateHUD();renderer.render(scene,camera);}},start:startGame,EV,triggerEvent(kind){const f=Math.sin(P.yaw),g=Math.cos(P.yaw);evEnd();return evStart(kind,f,g,-g,f);}};
 })();
