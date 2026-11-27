@@ -666,7 +666,7 @@ $('muteBtn').addEventListener('click',()=>{initAudio();setMuted(!muted);canvas.f
 
 // ---------------------------------------------------------------- game state
 const P={x:0,z:0,y:0,yaw:0,pitch:0,vx:0,vz:0,speed:0,accel:0,lat:0,lean:0,side:0,step:0,busy:0,grace:0,
-  yawPrev:0,yawVel:0,yawVelPrev:0,shake:0,stair:-1,zone:-1,wasBridge:false,wasWet:false,mudStep:0};
+  yawPrev:0,yawVel:0,yawVelPrev:0,shake:0,stair:-1,zone:-1,wasBridge:false,wasWet:false,mudStep:0,deckVel:0,deckAcc:0};
 const B={pitch:0,roll:0,pv:0,rv:0};
 const R={state:'carried',pos:new THREE.Vector3(),vel:new THREE.Vector3(),ang:new THREE.Vector3(),q:new THREE.Quaternion(),rest:0,pick:0,from:new THREE.Vector3(),fromQ:new THREE.Quaternion(),bounces:0,air:false,fallT:0,squash:0};
 // 떨어질 때마다 1~3번 중 무작위로 튀고, 그다음 땅에 닿으면 그 자리에서 멈춘다
@@ -960,11 +960,13 @@ function update(dt){
   for(const br of BRIDGES){if(br.kind!=='rope')continue;const on=brNow===br;let drive=0;if(on&&P.speed>0.3)drive=Math.sin(P.step*0.5)*P.speed*P.speed*0.09;
    const cxOld=on?bridgeCenterX(br,P.z):0,rxOld=(R.state==='ground'&&bridgeAt(R.pos.x,R.pos.z,R.pos.y)===br)?bridgeCenterX(br,R.pos.z):null;
    br.vel+=(-14*br.ang-0.35*br.vel+drive)*dt;br.ang=clamp(br.ang+br.vel*dt,-0.3,0.3);
-   if(on)P.x+=bridgeCenterX(br,P.z)-cxOld;                       // the deck carries you sideways as it swings
+   if(on){const dx=bridgeCenterX(br,P.z)-cxOld;P.x+=dx;          // the deck carries you sideways as it swings
+     const v=dx/dt;P.deckAcc=lerp(P.deckAcc,(v-P.deckVel)/dt,0.35);P.deckVel=v;}
    if(rxOld!==null)R.pos.x+=bridgeCenterX(br,R.pos.z)-rxOld;
    br.bob=lerp(br.bob,on?-0.35-Math.abs(Math.sin(P.step))*0.12:0,0.1);
    for(const m of br.group.children){const d=m.userData,roll=bridgeRoll(br,d.z),off=bridgeCenterX(br,d.z)-br.x;
      m.position.x=d.bx+off-d.above*Math.sin(roll);m.position.y=d.by+d.bx*Math.sin(roll)+br.bob*bridgeSpanU(br,d.z);m.rotation.z=roll;}}
+  if(!brNow||brNow.kind!=='rope'){P.deckVel*=0.8;P.deckAcc*=0.8;}
   // gust timer (only matters on the ridges)
   WIND.t-=dt;
   if(WIND.on>0){WIND.on-=dt;const ph=1-WIND.on/WIND.dur;WIND.str=Math.sin(ph*Math.PI)*WIND.peak;WIND.x=Math.cos(WIND.dir)*WIND.str;WIND.z=Math.sin(WIND.dir)*WIND.str;if(WIND.on<=0){WIND.str=0;WIND.x=WIND.z=0;}}
@@ -1002,7 +1004,12 @@ function update(dt){
     // windy ridge: gusts lean the radio away from the wind (hold it with Q/E, or turn into the wind)
     if(zt===Z_WIND&&WIND.on>0){const wr=WIND.x*rx+WIND.z*rz,wf=WIND.x*fx+WIND.z*fz;fr+=wr*0.62*zw;fp+=-wf*0.4*zw;}
     // the rope bridge rolls the radio with it
-    if(brNow&&brNow.kind==='rope'){const sp2=bridgeSpanU(brNow,P.z);fr+=(brNow.ang*5+brNow.vel*0.5)*(0.3+0.7*sp2);fp+=Math.abs(brNow.vel)*0.08*sp2;}
+    // rope bridge: the radio rides the deck. Every lurch of the deck flings it the other way,
+    // the deck's tilt leans it, and the bouncing deck jolts it back
+    if(brNow&&brNow.kind==='rope'){const sp2=bridgeSpanU(brNow,P.z);
+      fr+=clamp(-P.deckAcc*0.12,-0.85,0.85)+bridgeRoll(brNow,P.z)*3.5+(brNow.ang*2.5+brNow.vel*0.3)*(0.3+0.7*sp2);
+      fp+=Math.min(0.5,Math.abs(P.deckAcc)*0.04+Math.abs(brNow.vel)*0.1*sp2);
+      if(sp>4.8)fr+=Math.sin(P.step)*0.55*sp2;}   // running thumps the deck under you
     if(brNow&&brNow.kind==='log'){fr+=(P.x-brNow.x)*1.6+fbm(clock*1.6,brNow.x+3)*0.6;}   // off-centre on the log, the load leans out
     // turning the view swings the radio: it leans out of every turn, a sudden flick kicks it,
     // and shaking the view left-right pumps it over within a second or so
